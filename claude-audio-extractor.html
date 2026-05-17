@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Extractor</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 3rem 1rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 720px;
+    }
+
+    h1 {
+      font-size: 13px;
+      font-weight: normal;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #888;
+      margin-bottom: 2.5rem;
+    }
+
+    .label {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 8px;
+    }
+
+    .section {
+      margin-bottom: 2rem;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      padding: 2.5rem;
+      text-align: center;
+      color: #555;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+      border-color: #444;
+      color: #aaa;
+    }
+    .drop-zone .icon {
+      font-size: 28px;
+      display: block;
+      margin-bottom: 8px;
+    }
+    .drop-zone input[type="file"] { display: none; }
+    .drop-zone.loaded { color: #aaa; border-color: #333; }
+
+    /* Waveform */
+    canvas#waveform {
+      width: 100%;
+      height: 80px;
+      display: block;
+      border-radius: 4px;
+      background: #1a1a1a;
+      cursor: crosshair;
+    }
+
+    .info-bar {
+      display: flex;
+      gap: 2rem;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #555;
+      letter-spacing: 0.05em;
+    }
+
+    /* Time inputs */
+    .time-row {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.25rem;
+    }
+    .time-field { flex: 1; }
+    .time-field label {
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #555;
+      display: block;
+      margin-bottom: 6px;
+    }
+    .time-field input[type="number"] {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .time-field input[type="number"]:focus { border-color: #444; }
+    input[type="number"]::-webkit-inner-spin-button { opacity: 0.4; }
+
+    /* Format toggle */
+    .fmt-toggle {
+      display: flex;
+      gap: 0;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      overflow: hidden;
+      width: fit-content;
+      margin-top: 0.25rem;
+    }
+    .fmt-toggle label {
+      font-size: 12px;
+      padding: 7px 16px;
+      cursor: pointer;
+      color: #555;
+      user-select: none;
+      transition: background 0.1s, color 0.1s;
+      letter-spacing: 0.05em;
+    }
+    .fmt-toggle label:not(:last-child) { border-right: 1px solid #2a2a2a; }
+    .fmt-toggle input[type="radio"] { display: none; }
+    .fmt-toggle input[type="radio"]:checked + .fmt-label {
+      background: #e0e0e0;
+      color: #0f0f0f;
+    }
+    .badge {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: #1a3a1a;
+      color: #4caf50;
+      vertical-align: middle;
+      margin-left: 5px;
+      letter-spacing: 0.05em;
+    }
+
+    /* Buttons */
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-top: 1.5rem;
+      align-items: center;
+    }
+    button {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      cursor: pointer;
+      border-radius: 4px;
+      padding: 8px 16px;
+      transition: background 0.15s, color 0.15s;
+    }
+    #play-btn {
+      background: transparent;
+      border: 1px solid #2a2a2a;
+      color: #aaa;
+    }
+    #play-btn:hover { border-color: #444; color: #e0e0e0; }
+
+    #extract-btn {
+      background: #e0e0e0;
+      border: none;
+      color: #0f0f0f;
+      font-weight: bold;
+    }
+    #extract-btn:hover { background: #ffffff; }
+    #extract-btn:disabled { background: #2a2a2a; color: #555; cursor: default; }
+
+    /* Status */
+    .status {
+      font-size: 12px;
+      color: #555;
+      margin-top: 1rem;
+      min-height: 1.4em;
+      letter-spacing: 0.04em;
+    }
+    .status.error { color: #c0392b; }
+    .status.ok    { color: #4caf50; }
+
+    /* Download link */
+    #download-link {
+      display: none;
+      margin-top: 1rem;
+      font-size: 12px;
+      color: #aaa;
+      text-decoration: none;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      padding: 8px 16px;
+      letter-spacing: 0.06em;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    #download-link:hover { border-color: #444; color: #e0e0e0; }
+
+    /* Divider */
+    .divider {
+      border: none;
+      border-top: 1px solid #1e1e1e;
+      margin: 2rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Audio Extractor</h1>
+
+  <!-- File drop -->
+  <div class="section">
+    <div class="label">Source file</div>
+    <div class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="Upload audio file">
+      <input type="file" id="file-input" accept="audio/*">
+      <span class="icon">♪</span>
+      Drop an audio file here, or click to browse
+    </div>
+  </div>
+
+  <!-- Editor (hidden until file loaded) -->
+  <div id="editor-section" style="display:none">
+    <hr class="divider">
+
+    <!-- Waveform -->
+    <div class="section">
+      <div class="label">Waveform — drag to select region</div>
+      <canvas id="waveform" width="680" height="80"></canvas>
+      <div class="info-bar">
+        <span id="dur-label">Duration: —</span>
+        <span id="sel-label">Selected: —</span>
+      </div>
+    </div>
+
+    <!-- Time inputs -->
+    <div class="section">
+      <div class="label">Region</div>
+      <div class="time-row">
+        <div class="time-field">
+          <label for="start-input">Start (seconds)</label>
+          <input type="number" id="start-input" min="0" step="0.01" value="0">
+        </div>
+        <div class="time-field">
+          <label for="end-input">End (seconds)</label>
+          <input type="number" id="end-input" min="0" step="0.01" value="0">
+        </div>
+      </div>
+    </div>
+
+    <!-- Format -->
+    <div class="section">
+      <div class="label">Output format</div>
+      <div class="fmt-toggle">
+        <label>
+          <input type="radio" name="fmt" value="aac" checked>
+          <span class="fmt-label">AAC <span class="badge">AudioEncoder</span></span>
+        </label>
+        <label>
+          <input type="radio" name="fmt" value="wav">
+          <span class="fmt-label">WAV</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="btn-row">
+      <button id="play-btn">▶ Preview</button>
+      <button id="extract-btn" disabled>✂ Extract &amp; download</button>
+    </div>
+
+    <div class="status" id="status">Drag on the waveform or type times above</div>
+    <a id="download-link" href="#" download>↓ <span id="dl-filename">Save file</span></a>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── DOM refs ──────────────────────────────────────────────────────────────
+  const dropZone      = document.getElementById('drop-zone');
+  const fileInput     = document.getElementById('file-input');
+  const editorSection = document.getElementById('editor-section');
+  const canvas        = document.getElementById('waveform');
+  const ctx2d         = canvas.getContext('2d');
+  const startInput    = document.getElementById('start-input');
+  const endInput      = document.getElementById('end-input');
+  const playBtn       = document.getElementById('play-btn');
+  const extractBtn    = document.getElementById('extract-btn');
+  const statusEl      = document.getElementById('status');
+  const durLabel      = document.getElementById('dur-label');
+  const selLabel      = document.getElementById('sel-label');
+  const downloadLink  = document.getElementById('download-link');
+  const dlFilename    = document.getElementById('dl-filename');
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let audioCtx     = null;
+  let audioBuffer  = null;
+  let selStart     = 0;
+  let selEnd       = 0;
+  let dragging     = false;
+  let dragStartX   = 0;
+  let previewSrc   = null;
+
+  // ── AudioContext (lazy) ───────────────────────────────────────────────────
+  function getAC() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  // ── File loading ──────────────────────────────────────────────────────────
+  dropZone.addEventListener('click',     () => fileInput.click());
+  dropZone.addEventListener('keydown',   e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop',      e => { e.preventDefault(); dropZone.classList.remove('drag-over'); handleFile(e.dataTransfer.files[0]); });
+  fileInput.addEventListener('change',   () => handleFile(fileInput.files[0]));
+
+  function handleFile(file) {
+    if (!file) return;
+    setStatus('Decoding audio…', '');
+    downloadLink.style.display = 'none';
+
+    const reader = new FileReader();
+    reader.onload = async e => {
+      try {
+        audioBuffer = await getAC().decodeAudioData(e.target.result.slice(0));
+        selStart = 0;
+        selEnd   = audioBuffer.duration;
+        editorSection.style.display = 'block';
+        dropZone.classList.add('loaded');
+        dropZone.innerHTML = '<span class="icon">✓</span>' + file.name;
+        drawWaveform();
+        updateInputs();
+        setStatus('Drag on the waveform or type times above', '');
+      } catch (err) {
+        setStatus('Could not decode: ' + err.message, 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // ── Waveform ──────────────────────────────────────────────────────────────
+  function drawWaveform() {
+    if (!audioBuffer) return;
+    const W    = canvas.width;
+    const H    = canvas.height;
+    const data = audioBuffer.getChannelData(0);
+    const step = Math.ceil(data.length / W);
+    const mid  = H / 2;
+    const dur  = audioBuffer.duration;
+    const x0   = Math.round((selStart / dur) * W);
+    const x1   = Math.round((selEnd   / dur) * W);
+
+    ctx2d.clearRect(0, 0, W, H);
+
+    // Selection highlight
+    ctx2d.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx2d.fillRect(x0, 0, x1 - x0, H);
+
+    // Waveform bars
+    for (let x = 0; x < W; x++) {
+      let min = 1, max = -1;
+      for (let j = 0; j < step; j++) {
+        const v = data[x * step + j] || 0;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      const inSel  = x >= x0 && x <= x1;
+      ctx2d.fillStyle = inSel ? '#e0e0e0' : '#333';
+      const yTop = mid - max * mid * 0.9;
+      const yBot = mid - min * mid * 0.9;
+      ctx2d.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    }
+
+    // Selection edges
+    ctx2d.fillStyle = '#888';
+    ctx2d.fillRect(x0, 0, 1, H);
+    ctx2d.fillRect(x1, 0, 1, H);
+
+    durLabel.textContent = 'Duration: ' + audioBuffer.duration.toFixed(2) + 's';
+    selLabel.textContent = 'Selected: ' + selStart.toFixed(2) + 's – ' + selEnd.toFixed(2) + 's  (' + (selEnd - selStart).toFixed(2) + 's)';
+  }
+
+  function pxToTime(clientX) {
+    const rect  = canvas.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(audioBuffer.duration, ratio * audioBuffer.duration));
+  }
+
+  canvas.addEventListener('mousedown', e => {
+    if (!audioBuffer) return;
+    dragging   = true;
+    dragStartX = e.clientX;
+    selStart   = pxToTime(e.clientX);
+    selEnd     = selStart;
+    drawWaveform();
+  });
+
+  canvas.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const t = pxToTime(e.clientX);
+    if (e.clientX < dragStartX) selStart = t;
+    else selEnd = t;
+    updateInputs();
+    drawWaveform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; updateExtractBtn(); }
+  });
+
+  // ── Time inputs ───────────────────────────────────────────────────────────
+  function updateInputs() {
+    startInput.value = selStart.toFixed(2);
+    endInput.value   = selEnd.toFixed(2);
+    updateExtractBtn();
+  }
+
+  function updateExtractBtn() {
+    extractBtn.disabled = !audioBuffer || selEnd <= selStart;
+  }
+
+  [startInput, endInput].forEach(inp => inp.addEventListener('input', () => {
+    if (!audioBuffer) return;
+    selStart = Math.max(0, Math.min(audioBuffer.duration, parseFloat(startInput.value) || 0));
+    selEnd   = Math.max(selStart, Math.min(audioBuffer.duration, parseFloat(endInput.value) || 0));
+    drawWaveform();
+    updateExtractBtn();
+  }));
+
+  // ── Preview ───────────────────────────────────────────────────────────────
+  playBtn.addEventListener('click', () => {
+    if (!audioBuffer) return;
+    if (previewSrc) {
+      try { previewSrc.stop(); } catch (e) {}
+      previewSrc = null;
+      playBtn.textContent = '▶ Preview';
+      return;
+    }
+    if (selEnd <= selStart) { setStatus('Select a region first', ''); return; }
+
+    const src = getAC().createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(getAC().destination);
+    src.start(0, selStart, selEnd - selStart);
+    previewSrc = src;
+    playBtn.textContent = '■ Stop';
+    src.onended = () => { playBtn.textContent = '▶ Preview'; previewSrc = null; };
+    setStatus('Playing preview…', '');
+  });
+
+  // ── Extract ───────────────────────────────────────────────────────────────
+  extractBtn.addEventListener('click', async () => {
+    if (!audioBuffer || selEnd <= selStart) return;
+    const fmt = document.querySelector('input[name="fmt"]:checked').value;
+    extractBtn.disabled = true;
+    downloadLink.style.display = 'none';
+    setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…', '');
+
+    try {
+      let blob, filename;
+      const ts = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
+
+      if (fmt === 'aac') {
+        blob     = await extractAAC(audioBuffer, selStart, selEnd);
+        filename = 'extract_' + ts + '.aac';
+      } else {
+        blob     = extractWAV(audioBuffer, selStart, selEnd);
+        filename = 'extract_' + ts + '.wav';
+      }
+
+      const url = URL.createObjectURL(blob);
+      downloadLink.href     = url;
+      downloadLink.download = filename;
+      downloadLink.style.display = 'inline-block';
+      dlFilename.textContent = 'Save ' + filename;
+      setStatus((selEnd - selStart).toFixed(2) + 's extracted as ' + fmt.toUpperCase(), 'ok');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
+
+    extractBtn.disabled = false;
+  });
+
+  // ── AAC encoder (AudioEncoder API, Chromium 94+) ──────────────────────────
+  async function extractAAC(buffer, startSec, endSec) {
+    const sampleRate  = buffer.sampleRate;
+    const nChannels   = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sampleRate);
+    const endSample   = Math.floor(endSec   * sampleRate);
+    const length      = endSample - startSample;
+
+    // Slice channel data
+    const channelData = [];
+    for (let c = 0; c < nChannels; c++)
+      channelData.push(buffer.getChannelData(c).subarray(startSample, endSample));
+
+    const chunks = [];
+
+    await new Promise((resolve, reject) => {
+      const encoder = new AudioEncoder({
+        output: chunk => chunks.push(chunk),
+        error:  reject,
+      });
+
+      encoder.configure({
+        codec:            'mp4a.40.2', // AAC-LC
+        sampleRate,
+        numberOfChannels: nChannels,
+        bitrate:          128_000,
+      });
+
+      // AAC works in 1024-sample frames
+      const FRAME_SIZE = 1024;
+      let timestamp = 0; // in samples (converted to µs below)
+
+      for (let offset = 0; offset < length; offset += FRAME_SIZE) {
+        const frameLen    = Math.min(FRAME_SIZE, length - offset);
+        const interleaved = new Float32Array(frameLen * nChannels);
+
+        for (let i = 0; i < frameLen; i++)
+          for (let c = 0; c < nChannels; c++)
+            interleaved[i * nChannels + c] = channelData[c][offset + i];
+
+        const audioData = new AudioData({
+          format:           'f32-interleaved',
+          sampleRate,
+          numberOfFrames:   frameLen,
+          numberOfChannels: nChannels,
+          timestamp:        Math.round(timestamp * 1_000_000 / sampleRate), // µs
+          data:             interleaved,
+        });
+
+        encoder.encode(audioData);
+        audioData.close();
+        timestamp += frameLen;
+      }
+
+      encoder.flush().then(() => { encoder.close(); resolve(); }).catch(reject);
+    });
+
+    return new Blob([buildADTS(chunks, sampleRate, nChannels)], { type: 'audio/aac' });
+  }
+
+  // Wrap raw AAC frames in ADTS headers so the file is self-contained
+  function buildADTS(chunks, sampleRate, nChannels) {
+    // MPEG-4 sampling frequency index table
+    const FREQ_TABLE = [96000, 88200, 64000, 48000, 44100, 32000,
+                        24000, 22050, 16000, 12000, 11025,  8000, 7350];
+    let fi = FREQ_TABLE.indexOf(sampleRate);
+    if (fi < 0) fi = 4; // fallback: treat as 44100
+
+    // Copy raw bytes out of each EncodedAudioChunk
+    const raw = chunks.map(chunk => {
+      const d = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(d);
+      return d;
+    });
+
+    const totalBytes = raw.reduce((s, d) => s + 7 + d.length, 0);
+    const out = new Uint8Array(totalBytes);
+    let pos = 0;
+
+    for (const d of raw) {
+      const fl = 7 + d.length; // full ADTS frame length (header + payload)
+
+      // Byte 0-1: sync (12b=0xFFF) | ID=0 MPEG-4 | layer=00 | protection_absent=1
+      out[pos    ] = 0xFF;
+      out[pos + 1] = 0xF1;
+      // Byte 2: profile_ObjectType-1=1 (AAC-LC) | sampling_freq_index | private=0 | channel_config[2]
+      out[pos + 2] = (1 << 6) | (fi << 2) | (nChannels >> 2);
+      // Byte 3: channel_config[1:0] | 4 zeros | frame_length[12:11]
+      out[pos + 3] = ((nChannels & 3) << 6) | ((fl >> 11) & 0x03);
+      // Byte 4: frame_length[10:3]
+      out[pos + 4] = (fl >> 3) & 0xFF;
+      // Byte 5: frame_length[2:0] | buffer_fullness[10:6]  (0x7FF = VBR)
+      out[pos + 5] = ((fl & 7) << 5) | 0x1F;
+      // Byte 6: buffer_fullness[5:0] | number_of_raw_data_blocks_in_frame=0
+      out[pos + 6] = 0xFC;
+
+      out.set(d, pos + 7);
+      pos += fl;
+    }
+
+    return out.buffer;
+  }
+
+  // ── WAV encoder (pure JS, no API needed) ─────────────────────────────────
+  function extractWAV(buffer, startSec, endSec) {
+    const sampleRate  = buffer.sampleRate;
+    const nChannels   = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sampleRate);
+    const endSample   = Math.floor(endSec   * sampleRate);
+    const length      = endSample - startSample;
+    const dataLen     = length * nChannels * 2; // 16-bit samples
+
+    const ab   = new ArrayBuffer(44 + dataLen);
+    const view = new DataView(ab);
+
+    function writeStr(offset, str) {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
+
+    // RIFF header
+    writeStr(0,  'RIFF'); view.setUint32(4,  36 + dataLen,            true);
+    writeStr(8,  'WAVE');
+    // fmt chunk
+    writeStr(12, 'fmt '); view.setUint32(16, 16,                      true); // chunk size
+    view.setUint16(20, 1,                                              true); // PCM
+    view.setUint16(22, nChannels,                                      true);
+    view.setUint32(24, sampleRate,                                     true);
+    view.setUint32(28, sampleRate * nChannels * 2,                     true); // byte rate
+    view.setUint16(32, nChannels * 2,                                  true); // block align
+    view.setUint16(34, 16,                                             true); // bits per sample
+    // data chunk
+    writeStr(36, 'data'); view.setUint32(40, dataLen,                  true);
+
+    let offset = 44;
+    for (let i = 0; i < length; i++) {
+      for (let c = 0; c < nChannels; c++) {
+        const sample = Math.max(-1, Math.min(1, buffer.getChannelData(c)[startSample + i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+
+    return new Blob([ab], { type: 'audio/wav' });
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function setStatus(msg, type) {
+    statusEl.textContent  = msg;
+    statusEl.className    = 'status' + (type ? ' ' + type : '');
+  }
+
+})();
+</script>
+</body>
+</html>
