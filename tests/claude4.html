@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Extractor</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      background: #0f0f0f;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 3rem 1rem;
+    }
+
+    .container { width: 100%; max-width: 720px; }
+
+    /* Header */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 2.5rem;
+    }
+    header h1 {
+      font-size: 13px;
+      font-weight: normal;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #888;
+    }
+
+    .label {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #555;
+      margin-bottom: 8px;
+    }
+    .section { margin-bottom: 2rem; }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 1px solid #2a2a2a;
+      border-radius: 6px;
+      padding: 2.5rem;
+      text-align: center;
+      color: #555;
+      font-size: 13px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: #444; color: #aaa; }
+    .drop-zone .icon { font-size: 28px; display: block; margin-bottom: 8px; }
+    .drop-zone input[type="file"] { display: none; }
+    .drop-zone.loaded { color: #aaa; border-color: #333; }
+
+    /* Waveform */
+    canvas#waveform {
+      width: 100%;
+      height: 100px;
+      display: block;
+      border-radius: 4px;
+      background: #1a1a1a;
+      cursor: crosshair;
+      touch-action: none; /* essential: lets JS own all touch events */
+    }
+
+    /* Zoom / pan sliders */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+    .slider-row-label {
+      font-size: 11px;
+      color: #555;
+      letter-spacing: 0.08em;
+      white-space: nowrap;
+      width: 36px;
+    }
+    .slider-val {
+      font-size: 11px;
+      color: #777;
+      width: 32px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      flex: 1;
+      height: 2px;
+      background: #2a2a2a;
+      border-radius: 1px;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      background: #e0e0e0;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 14px; height: 14px;
+      background: #e0e0e0;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+    }
+    #pan-row { display: none; }
+
+    .info-bar {
+      display: flex;
+      gap: 2rem;
+      margin-top: 6px;
+      font-size: 11px;
+      color: #555;
+      letter-spacing: 0.05em;
+    }
+
+    /* Time inputs */
+    .time-row { display: flex; gap: 1rem; }
+    .time-field { flex: 1; }
+    .time-field label {
+      font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+      color: #555; display: block; margin-bottom: 6px;
+    }
+    .time-field input[type="number"] {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      color: #e0e0e0;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .time-field input[type="number"]:focus { border-color: #444; }
+    input[type="number"]::-webkit-inner-spin-button { opacity: 0.4; }
+
+    /* Format toggle — JS-driven buttons, no :checked trickery */
+    .fmt-toggle {
+      display: flex;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      overflow: hidden;
+      width: fit-content;
+    }
+    .fmt-btn {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px;
+      padding: 7px 16px;
+      cursor: pointer;
+      color: #555;
+      background: transparent;
+      border: none;
+      letter-spacing: 0.05em;
+      transition: background 0.12s, color 0.12s;
+    }
+    .fmt-btn:not(:last-child) { border-right: 1px solid #2a2a2a; }
+    .fmt-btn.active { background: #e0e0e0; color: #0f0f0f; }
+    .badge {
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: #1a3a1a;
+      color: #4caf50;
+      vertical-align: middle;
+      margin-left: 5px;
+      letter-spacing: 0.05em;
+    }
+    .fmt-btn.active .badge { background: #c4e8c4; color: #1a4a1a; }
+
+    /* Buttons */
+    .btn-row { display: flex; gap: 8px; margin-top: 1.5rem; align-items: center; }
+    button {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 12px; letter-spacing: 0.08em;
+      cursor: pointer; border-radius: 4px; padding: 8px 16px;
+      transition: background 0.15s, color 0.15s;
+    }
+    #play-btn { background: transparent; border: 1px solid #2a2a2a; color: #aaa; }
+    #play-btn:hover { border-color: #444; color: #e0e0e0; }
+    #extract-btn { background: #e0e0e0; border: none; color: #0f0f0f; font-weight: bold; }
+    #extract-btn:hover { background: #fff; }
+    #extract-btn:disabled { background: #2a2a2a; color: #555; cursor: default; }
+
+    .status { font-size: 12px; color: #555; margin-top: 1rem; min-height: 1.4em; letter-spacing: 0.04em; }
+    .status.error { color: #c0392b; }
+    .status.ok    { color: #4caf50; }
+
+    #download-link {
+      display: none;
+      margin-top: 1rem;
+      font-size: 12px; color: #aaa; text-decoration: none;
+      border: 1px solid #2a2a2a; border-radius: 4px; padding: 8px 16px;
+      letter-spacing: 0.06em;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    #download-link:hover { border-color: #444; color: #e0e0e0; }
+
+    .divider { border: none; border-top: 1px solid #1e1e1e; margin: 2rem 0; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- Header with logo -->
+  <header>
+    <img src="favicon.svg" width="40" height="40" alt="Audio Extractor logo">
+    <h1>Audio Extractor</h1>
+  </header>
+
+  <!-- File drop -->
+  <div class="section">
+    <div class="label">Source file</div>
+    <div class="drop-zone" id="drop-zone" tabindex="0" role="button" aria-label="Upload audio file">
+      <input type="file" id="file-input" accept="audio/*">
+      <span class="icon">♪</span>
+      Drop an audio file here, or click to browse
+    </div>
+  </div>
+
+  <!-- Editor -->
+  <div id="editor-section" style="display:none">
+    <hr class="divider">
+
+    <div class="section">
+      <div class="label">Waveform — drag to select · scroll or pinch to zoom</div>
+      <canvas id="waveform" width="680" height="100"></canvas>
+
+      <div class="slider-row">
+        <span class="slider-row-label">Zoom</span>
+        <input type="range" id="zoom-slider" min="1" max="32" step="1" value="1">
+        <span class="slider-val" id="zoom-val">1×</span>
+      </div>
+
+      <div class="slider-row" id="pan-row">
+        <span class="slider-row-label">Pan</span>
+        <input type="range" id="pan-slider" min="0" max="1" step="0.001" value="0">
+      </div>
+
+      <div class="info-bar">
+        <span id="dur-label">Duration: —</span>
+        <span id="sel-label">Selected: —</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="label">Region</div>
+      <div class="time-row">
+        <div class="time-field">
+          <label for="start-input">Start (seconds)</label>
+          <input type="number" id="start-input" min="0" step="0.01" value="0">
+        </div>
+        <div class="time-field">
+          <label for="end-input">End (seconds)</label>
+          <input type="number" id="end-input" min="0" step="0.01" value="0">
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="label">Output format</div>
+      <div class="fmt-toggle">
+        <button class="fmt-btn active" data-fmt="aac">AAC <span class="badge">AudioEncoder</span></button>
+        <button class="fmt-btn" data-fmt="wav">WAV</button>
+      </div>
+    </div>
+
+    <div class="btn-row">
+      <button id="play-btn">▶ Preview</button>
+      <button id="extract-btn" disabled>✂ Extract &amp; download</button>
+    </div>
+    <div class="status" id="status">Drag on the waveform or type times above</div>
+    <a id="download-link" href="#" download>↓ <span id="dl-filename">Save file</span></a>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── DOM ───────────────────────────────────────────────────────────────────
+  const dropZone      = document.getElementById('drop-zone');
+  const fileInput     = document.getElementById('file-input');
+  const editorSection = document.getElementById('editor-section');
+  const canvas        = document.getElementById('waveform');
+  const ctx2d         = canvas.getContext('2d');
+  const startInput    = document.getElementById('start-input');
+  const endInput      = document.getElementById('end-input');
+  const playBtn       = document.getElementById('play-btn');
+  const extractBtn    = document.getElementById('extract-btn');
+  const statusEl      = document.getElementById('status');
+  const durLabel      = document.getElementById('dur-label');
+  const selLabel      = document.getElementById('sel-label');
+  const downloadLink  = document.getElementById('download-link');
+  const dlFilename    = document.getElementById('dl-filename');
+  const zoomSlider    = document.getElementById('zoom-slider');
+  const zoomValEl     = document.getElementById('zoom-val');
+  const panSlider     = document.getElementById('pan-slider');
+  const panRow        = document.getElementById('pan-row');
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let audioCtx    = null;
+  let audioBuffer = null;
+  let selStart    = 0;
+  let selEnd      = 0;
+  let previewSrc  = null;
+  let selectedFmt = 'aac';
+
+  let zoomLevel = 1;
+  let viewStart = 0;   // seconds
+
+  let dragging       = false;
+  let dragAnchorTime = 0;
+
+  let pinching       = false;
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
+  let pinchStartVS   = 0;
+  let pinchMidRatio  = 0.5;
+
+  // ── AudioContext ──────────────────────────────────────────────────────────
+  function getAC() {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    return audioCtx;
+  }
+
+  // ── Zoom helpers ──────────────────────────────────────────────────────────
+  function visDur() { return audioBuffer ? audioBuffer.duration / zoomLevel : 0; }
+
+  function clampVS(vs, zoom) {
+    const vd = audioBuffer.duration / zoom;
+    return Math.max(0, Math.min(audioBuffer.duration - vd, vs));
+  }
+
+  function applyZoom(newZoom, newVS) {
+    zoomLevel = Math.max(1, Math.min(32, newZoom));
+    viewStart = clampVS(newVS !== undefined ? newVS : viewStart, zoomLevel);
+    zoomSlider.value      = Math.round(zoomLevel);
+    zoomValEl.textContent = zoomLevel.toFixed(1).replace(/\.0$/, '') + '×';
+    const zoomed = zoomLevel > 1.001;
+    panRow.style.display  = zoomed ? 'flex' : 'none';
+    if (zoomed) {
+      const maxVS = audioBuffer.duration - visDur();
+      panSlider.value = maxVS > 0 ? (viewStart / maxVS).toFixed(4) : 0;
+    }
+    drawWaveform();
+  }
+
+  zoomSlider.addEventListener('input', () => {
+    const newZoom = parseInt(zoomSlider.value);
+    const centre  = viewStart + visDur() / 2;
+    const newVD   = audioBuffer.duration / newZoom;
+    applyZoom(newZoom, centre - newVD / 2);
+  });
+
+  panSlider.addEventListener('input', () => {
+    if (!audioBuffer) return;
+    const maxVS = audioBuffer.duration - visDur();
+    viewStart   = parseFloat(panSlider.value) * maxVS;
+    drawWaveform();
+  });
+
+  // Mouse-wheel zoom centred on cursor
+  canvas.addEventListener('wheel', e => {
+    if (!audioBuffer) return;
+    e.preventDefault();
+    const rect   = canvas.getBoundingClientRect();
+    const ratio  = (e.clientX - rect.left) / rect.width;
+    const anchor = viewStart + ratio * visDur();
+    const factor = e.deltaY < 0 ? 1.25 : 0.8;
+    const newZ   = Math.max(1, Math.min(32, zoomLevel * factor));
+    const newVD  = audioBuffer.duration / newZ;
+    applyZoom(newZ, anchor - ratio * newVD);
+  }, { passive: false });
+
+  // ── Waveform drawing ──────────────────────────────────────────────────────
+  function drawWaveform() {
+    if (!audioBuffer) return;
+    const W    = canvas.width;
+    const H    = canvas.height;
+    const sr   = audioBuffer.sampleRate;
+    const data = audioBuffer.getChannelData(0);
+    const vd   = visDur();
+    const ve   = viewStart + vd;
+
+    const sStart   = Math.max(0, Math.floor(viewStart * sr));
+    const sEnd     = Math.min(data.length, Math.ceil(ve * sr));
+    const visSamps = Math.max(1, sEnd - sStart);
+    const step     = Math.max(1, Math.ceil(visSamps / W));
+
+    const toX = t => ((t - viewStart) / vd) * W;
+    const x0  = Math.max(-1,    Math.round(toX(selStart)));
+    const x1  = Math.min(W + 1, Math.round(toX(selEnd)));
+
+    ctx2d.clearRect(0, 0, W, H);
+
+    // Selection highlight
+    ctx2d.fillStyle = 'rgba(255,255,255,0.06)';
+    ctx2d.fillRect(x0, 0, x1 - x0, H);
+
+    // Waveform bars
+    for (let x = 0; x < W; x++) {
+      let min = 1, max = -1;
+      const off = sStart + x * step;
+      for (let j = 0; j < step; j++) {
+        const v = data[off + j] || 0;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      ctx2d.fillStyle = (x >= x0 && x <= x1) ? '#e0e0e0' : '#333';
+      const yTop = H / 2 - max * (H / 2) * 0.9;
+      const yBot = H / 2 - min * (H / 2) * 0.9;
+      ctx2d.fillRect(x, yTop, 1, Math.max(1, yBot - yTop));
+    }
+
+    // Selection edge markers
+    ctx2d.fillStyle = '#888';
+    if (x0 >= 0 && x0 <= W) ctx2d.fillRect(x0, 0, 1, H);
+    if (x1 >= 0 && x1 <= W) ctx2d.fillRect(x1, 0, 1, H);
+
+    durLabel.textContent = 'Duration: ' + audioBuffer.duration.toFixed(2) + 's';
+    selLabel.textContent = 'Selected: ' + selStart.toFixed(2) + 's – ' + selEnd.toFixed(2)
+                         + 's  (' + (selEnd - selStart).toFixed(2) + 's)';
+  }
+
+  function pxToTime(clientX) {
+    const rect  = canvas.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / rect.width;
+    return Math.max(0, Math.min(audioBuffer.duration, viewStart + ratio * visDur()));
+  }
+
+  // ── Drag helpers ──────────────────────────────────────────────────────────
+  function startDrag(clientX) {
+    dragging       = true;
+    dragAnchorTime = pxToTime(clientX);
+    selStart       = dragAnchorTime;
+    selEnd         = dragAnchorTime;
+    drawWaveform();
+  }
+
+  function continueDrag(clientX) {
+    const t = pxToTime(clientX);
+    if (t < dragAnchorTime) { selStart = t; selEnd = dragAnchorTime; }
+    else                    { selStart = dragAnchorTime; selEnd = t; }
+    updateInputs();
+    drawWaveform();
+  }
+
+  function endDrag() { dragging = false; updateExtractBtn(); }
+
+  // ── Mouse events ──────────────────────────────────────────────────────────
+  canvas.addEventListener('mousedown', e => {
+    if (!audioBuffer) return;
+    e.preventDefault();
+    startDrag(e.clientX);
+  });
+  canvas.addEventListener('mousemove', e => { if (dragging) continueDrag(e.clientX); });
+  window.addEventListener('mouseup',   () => { if (dragging) endDrag(); });
+
+  // ── Touch events — single finger = select, two fingers = pinch zoom ───────
+  canvas.addEventListener('touchstart', e => {
+    if (!audioBuffer) return;
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      pinching = false;
+      startDrag(e.touches[0].clientX);
+    } else if (e.touches.length === 2) {
+      if (dragging) endDrag();
+      pinching       = true;
+      dragging       = false;
+      pinchStartDist = Math.abs(e.touches[1].clientX - e.touches[0].clientX);
+      pinchStartZoom = zoomLevel;
+      pinchStartVS   = viewStart;
+      const rect     = canvas.getBoundingClientRect();
+      const midX     = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      pinchMidRatio  = (midX - rect.left) / rect.width;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (e.touches.length === 1 && dragging) {
+      continueDrag(e.touches[0].clientX);
+    } else if (e.touches.length === 2 && pinching) {
+      const dx    = Math.abs(e.touches[1].clientX - e.touches[0].clientX);
+      const scale = pinchStartDist > 0 ? dx / pinchStartDist : 1;
+      const newZ  = Math.max(1, Math.min(32, pinchStartZoom * scale));
+      const anchor = pinchStartVS + pinchMidRatio * (audioBuffer.duration / pinchStartZoom);
+      const newVD  = audioBuffer.duration / newZ;
+      applyZoom(newZ, anchor - pinchMidRatio * newVD);
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (e.touches.length === 0) {
+      if (dragging) endDrag();
+      pinching = false;
+    }
+    // Two fingers → one finger: restart drag from remaining finger
+    if (e.touches.length === 1 && pinching) {
+      pinching = false;
+      startDrag(e.touches[0].clientX);
+    }
+  }, { passive: false });
+
+  // ── File loading ──────────────────────────────────────────────────────────
+  dropZone.addEventListener('click',     () => fileInput.click());
+  dropZone.addEventListener('keydown',   e => { if (e.key === 'Enter' || e.key === ' ') fileInput.click(); });
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+
+  function handleFile(file) {
+    if (!file) return;
+    setStatus('Decoding audio…', '');
+    downloadLink.style.display = 'none';
+    const reader = new FileReader();
+    reader.onload = async e => {
+      try {
+        audioBuffer = await getAC().decodeAudioData(e.target.result.slice(0));
+        selStart  = 0;
+        selEnd    = audioBuffer.duration;
+        editorSection.style.display = 'block';
+        dropZone.classList.add('loaded');
+        dropZone.innerHTML = '<span class="icon">✓</span>' + file.name;
+        applyZoom(1, 0);
+        updateInputs();
+        setStatus('Drag on the waveform or type times above', '');
+      } catch (err) {
+        setStatus('Could not decode: ' + err.message, 'error');
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // ── Time inputs ───────────────────────────────────────────────────────────
+  function updateInputs() {
+    startInput.value = selStart.toFixed(2);
+    endInput.value   = selEnd.toFixed(2);
+    updateExtractBtn();
+  }
+
+  function updateExtractBtn() {
+    extractBtn.disabled = !audioBuffer || selEnd <= selStart;
+  }
+
+  [startInput, endInput].forEach(inp => inp.addEventListener('input', () => {
+    if (!audioBuffer) return;
+    selStart = Math.max(0, Math.min(audioBuffer.duration, parseFloat(startInput.value) || 0));
+    selEnd   = Math.max(selStart, Math.min(audioBuffer.duration, parseFloat(endInput.value) || 0));
+    drawWaveform();
+    updateExtractBtn();
+  }));
+
+  // ── Format selector ───────────────────────────────────────────────────────
+  // Use e.currentTarget (always the button itself) not btn/e.target, which
+  // could be the inner <span class="badge"> when the user clicks that text.
+  document.querySelectorAll('.fmt-btn').forEach(btn => {
+    btn.addEventListener('click', function (e) {
+      const clicked = e.currentTarget;
+      selectedFmt = clicked.dataset.fmt;
+      document.querySelectorAll('.fmt-btn').forEach(b => b.classList.toggle('active', b === clicked));
+    });
+  });
+
+  // ── Preview ───────────────────────────────────────────────────────────────
+  playBtn.addEventListener('click', () => {
+    if (!audioBuffer) return;
+    if (previewSrc) {
+      try { previewSrc.stop(); } catch (_) {}
+      previewSrc = null;
+      playBtn.textContent = '▶ Preview';
+      return;
+    }
+    if (selEnd <= selStart) { setStatus('Select a region first', ''); return; }
+    const ac  = getAC();
+    const src = ac.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(ac.destination);
+    src.start(0, selStart, selEnd - selStart);
+    previewSrc = src;
+    playBtn.textContent = '■ Stop';
+    src.onended = () => { playBtn.textContent = '▶ Preview'; previewSrc = null; };
+    setStatus('Playing preview…', '');
+  });
+
+  // ── Extract ───────────────────────────────────────────────────────────────
+  extractBtn.addEventListener('click', async () => {
+    if (!audioBuffer || selEnd <= selStart) return;
+    extractBtn.disabled = true;
+    downloadLink.style.display = 'none';
+    setStatus(selectedFmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…', '');
+    try {
+      const ts = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
+      let blob, filename;
+      if (selectedFmt === 'aac') {
+        blob     = await extractAAC(audioBuffer, selStart, selEnd);
+        filename = 'extract_' + ts + '.aac';
+      } else {
+        blob     = extractWAV(audioBuffer, selStart, selEnd);
+        filename = 'extract_' + ts + '.wav';
+      }
+      const url = URL.createObjectURL(blob);
+      downloadLink.href     = url;
+      downloadLink.download = filename;
+      downloadLink.style.display = 'inline-block';
+      dlFilename.textContent = 'Save ' + filename;
+      setStatus((selEnd - selStart).toFixed(2) + 's extracted as ' + selectedFmt.toUpperCase(), 'ok');
+    } catch (err) {
+      setStatus('Error: ' + err.message, 'error');
+    }
+    extractBtn.disabled = false;
+  });
+
+  // ── AAC encoder (AudioEncoder API — Chromium 94+) ─────────────────────────
+  async function extractAAC(buffer, startSec, endSec) {
+    const sr          = buffer.sampleRate;
+    const nCh         = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sr);
+    const endSample   = Math.floor(endSec   * sr);
+    const length      = endSample - startSample;
+
+    const channelData = [];
+    for (let c = 0; c < nCh; c++)
+      channelData.push(buffer.getChannelData(c).subarray(startSample, endSample));
+
+    const chunks = [];
+
+    await new Promise((resolve, reject) => {
+      let encoder;
+      try {
+        encoder = new AudioEncoder({
+          output: chunk => chunks.push(chunk),
+          error:  err   => reject(err),
+        });
+
+        encoder.configure({
+          codec:            'mp4a.40.2', // AAC-LC
+          sampleRate:       sr,
+          numberOfChannels: nCh,
+          bitrate:          128_000,
+        });
+
+        const FRAME = 1024;
+        let timestamp = 0;
+
+        for (let offset = 0; offset < length; offset += FRAME) {
+          const frameLen    = Math.min(FRAME, length - offset);
+          const interleaved = new Float32Array(frameLen * nCh);
+          for (let i = 0; i < frameLen; i++)
+            for (let c = 0; c < nCh; c++)
+              interleaved[i * nCh + c] = channelData[c][offset + i];
+
+          const ad = new AudioData({
+            format:           'f32-interleaved',
+            sampleRate:       sr,
+            numberOfFrames:   frameLen,
+            numberOfChannels: nCh,
+            timestamp:        Math.round(timestamp * 1_000_000 / sr),
+            data:             interleaved,
+          });
+          encoder.encode(ad);
+          ad.close();
+          timestamp += frameLen;
+        }
+
+        // flush() resolves once all output callbacks have been fired
+        encoder.flush()
+          .then(() => { encoder.close(); resolve(); })
+          .catch(err => { try { encoder.close(); } catch (_) {} reject(err); });
+
+      } catch (err) {
+        if (encoder) try { encoder.close(); } catch (_) {}
+        reject(err);
+      }
+    });
+
+    return new Blob([buildADTS(chunks, sr, nCh)], { type: 'audio/aac' });
+  }
+
+  function buildADTS(chunks, sampleRate, nChannels) {
+    const FREQ = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+    let fi = FREQ.indexOf(sampleRate);
+    if (fi < 0) fi = 4;
+
+    const raw   = chunks.map(c => { const d = new Uint8Array(c.byteLength); c.copyTo(d); return d; });
+    const total = raw.reduce((s, d) => s + 7 + d.length, 0);
+    const out   = new Uint8Array(total);
+    let pos     = 0;
+
+    for (const d of raw) {
+      const fl   = 7 + d.length;
+      out[pos  ] = 0xFF;
+      out[pos+1] = 0xF1;
+      out[pos+2] = (1 << 6) | (fi << 2) | (nChannels >> 2);
+      out[pos+3] = ((nChannels & 3) << 6) | ((fl >> 11) & 0x03);
+      out[pos+4] = (fl >> 3) & 0xFF;
+      out[pos+5] = ((fl & 7) << 5) | 0x1F;
+      out[pos+6] = 0xFC;
+      out.set(d, pos + 7);
+      pos += fl;
+    }
+    return out.buffer;
+  }
+
+  // ── WAV encoder ───────────────────────────────────────────────────────────
+  function extractWAV(buffer, startSec, endSec) {
+    const sr          = buffer.sampleRate;
+    const nCh         = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sr);
+    const endSample   = Math.floor(endSec   * sr);
+    const length      = endSample - startSample;
+    const dataLen     = length * nCh * 2;
+    const ab          = new ArrayBuffer(44 + dataLen);
+    const v           = new DataView(ab);
+    const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+
+    ws(0, 'RIFF'); v.setUint32(4, 36 + dataLen, true);
+    ws(8, 'WAVE'); ws(12, 'fmt ');
+    v.setUint32(16, 16,       true); v.setUint16(20, 1,        true);
+    v.setUint16(22, nCh,      true); v.setUint32(24, sr,       true);
+    v.setUint32(28, sr*nCh*2, true); v.setUint16(32, nCh*2,   true);
+    v.setUint16(34, 16,       true);
+    ws(36, 'data'); v.setUint32(40, dataLen, true);
+
+    let off = 44;
+    for (let i = 0; i < length; i++)
+      for (let c = 0; c < nCh; c++) {
+        const s = Math.max(-1, Math.min(1, buffer.getChannelData(c)[startSample + i]));
+        v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        off += 2;
+      }
+
+    return new Blob([ab], { type: 'audio/wav' });
+  }
+
+  // ── Status ────────────────────────────────────────────────────────────────
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg;
+    statusEl.className   = 'status' + (cls ? ' ' + cls : '');
+  }
+
+})();
+</script>
+</body>
+</html>
