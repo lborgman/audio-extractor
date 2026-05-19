@@ -6,13 +6,13 @@
 
   <rect x="68" y="44" width="64" height="112" rx="3" fill="#ffffff" fill-opacity="0.05"/>
 
-  <rect x="68"   y="44"  width="1.5" height="112" fill="#888888"/>
-  <rect x="68"   y="40"  width="1.5" height="8"   fill="#888888"/>
-  <rect x="68"   y="152" width="1.5" height="8"   fill="#888888"/>
+  <rect x="68"   y="44"  width="1.5" height="112" fill="#4ade80"/>
+  <rect x="66"   y="40"  width="5.5" height="8"   fill="#4ade80"/>
+  <rect x="68"   y="152" width="1.5" height="8"   fill="#4ade80"/>
 
-  <rect x="130.5" y="44"  width="1.5" height="112" fill="#888888"/>
-  <rect x="130.5" y="40"  width="1.5" height="8"   fill="#888888"/>
-  <rect x="130.5" y="152" width="1.5" height="8"   fill="#888888"/>
+  <rect x="130.5" y="44"  width="1.5" height="112" fill="#f87171"/>
+  <rect x="128.5" y="40"  width="5.5" height="8"   fill="#f87171"/>
+  <rect x="130.5" y="152" width="1.5" height="8"   fill="#f87171"/>
 
   <rect x="20"  y="92"  width="5" height="16" rx="2" fill="#2c2c2c"/>
   <rect x="29"  y="84"  width="5" height="32" rx="2" fill="#2c2c2c"/>
