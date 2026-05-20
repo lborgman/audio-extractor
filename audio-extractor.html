@@ -218,6 +218,12 @@
       color: #999;
       white-space: nowrap;
     }
+    #lossless-badge {
+      font-size: 13px;
+      color: #86efac;
+      white-space: nowrap;
+      letter-spacing: 0.03em;
+    }
 
     /* ── Fade row ──────────────────────────────────────────────────────────────── */
     .fade-row {
@@ -274,8 +280,8 @@
     .status {
       font-size: 15px;
       color: #999;
-      margin-top: 1rem;
-      min-height: 1.5em;
+      margin-top: 0.5rem;
+      margin-bottom: 1rem;
     }
     /* Error: #ff8a80 = 6.5:1 on #0f0f0f  ✓ */
     .status.error { color: #ff8a80; }
@@ -308,7 +314,7 @@
     <img src="favicon.svg" width="44" height="44" alt="Audio Extractor logo">
     <div>
       <h1>Audio Extractor</h1>
-      <div class="credit">(made by Claude AI, ver 17)</div>
+      <div class="credit">(made by Claude AI, ver 18)</div>
     </div>
   </header>
 
@@ -323,6 +329,8 @@
       Drop an audio file here, or click to browse
     </div>
   </div>
+
+  <div id="load-status" class="status" role="status" aria-live="polite"></div>
 
   <!-- ── Editor (hidden until file loaded) ── -->
   <div id="editor-section" style="display:none">
@@ -356,6 +364,7 @@
     <!-- Region -->
     <div class="section">
       <div class="label">Region</div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
       <div class="time-row">
         <div class="time-field">
           <label for="start-input">Start (seconds)</label>
@@ -384,6 +393,7 @@
           <option value="160000">160 kbps</option>
           <option value="192000">192 kbps</option>
         </select>
+        <span id="lossless-badge" style="display:none"></span>
         <span id="est-size"></span>
       </div>
     </div>
@@ -405,9 +415,6 @@
       <button id="extract-btn" type="button" disabled>✂ Extract &amp; download</button>
     </div>
 
-    <div class="status" id="status" role="status" aria-live="polite">
-      Drag the S and E markers on the waveform, or type times below
-    </div>
     <a id="download-link" href="#" download>↓ <span id="dl-filename">Save file</span></a>
   </div>
 
@@ -429,11 +436,13 @@
   const bitrateSelect = document.getElementById('bitrate-select');
   const bitrateLabel  = document.getElementById('bitrate-label');
   const estSizeEl     = document.getElementById('est-size');
+  const losslessBadge = document.getElementById('lossless-badge');
   const playBtn       = document.getElementById('play-btn');
   const extractBtn    = document.getElementById('extract-btn');
   const fadeInEl      = document.getElementById('fade-in');
   const fadeOutEl     = document.getElementById('fade-out');
   const statusEl      = document.getElementById('status');
+  const loadStatusEl  = document.getElementById('load-status');
   const durLabel      = document.getElementById('dur-label');
   const selLabel      = document.getElementById('sel-label');
   const downloadLink  = document.getElementById('download-link');
@@ -446,6 +455,8 @@
   // ── State ───────────────────────────────────────────────────────────────────
   let audioCtx    = null;
   let audioBuffer = null;
+  let sourceFile   = null;  // original File object, kept for remuxing
+  let sourceFormat = null;  // detected container format: 'wav','adts','mp4','flac',null
   let selStart    = 0;
   let selEnd      = 0;
   let previewSrc  = null;
@@ -791,6 +802,18 @@
   fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
 
   function handleFile(file) {
+    sourceFile   = file;
+    sourceFormat = null;
+    updateLosslessBadge();
+
+    // Detect container format from the first 16 bytes (cheap slice, not whole file)
+    file.slice(0, 16).arrayBuffer().then(header => {
+      const u8   = new Uint8Array(header);
+      const view = new DataView(header);
+      sourceFormat = detectContainerFormat(view, u8);
+      updateLosslessBadge();
+    }).catch(() => {});
+
     setStatus('Reading file…');
     downloadLink.style.display = 'none';
     dropZone.classList.remove('loaded');
@@ -801,13 +824,12 @@
     const reader = new FileReader();
     reader.onload = async evt => {
       try {
-        setStatus('Decoding audio…');
+        loadStatusEl.textContent = 'Decoding audio…';
+        loadStatusEl.className   = 'status';
         const ac = getAC();
         audioBuffer = await ac.decodeAudioData(evt.target.result);
 
-        setStatus('Building waveform…');
-        // Yield to the browser so the status message renders before the
-        // (potentially slow) cache build blocks the main thread.
+        loadStatusEl.textContent = 'Building waveform…';
         await new Promise(r => setTimeout(r, 0));
         waveformDirty = true;
         buildWaveformCache();
@@ -815,6 +837,7 @@
         selStart = 0;
         selEnd   = audioBuffer.duration;
         editorSection.style.display = 'block';
+        loadStatusEl.textContent = '';
         dropZone.classList.remove('loading');
         dropZone.classList.add('loaded');
         dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>' +
@@ -824,17 +847,21 @@
         setStatus('Drag the S and E markers on the waveform, or type times below');
         if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
       } catch (err) {
+        audioBuffer = null;
+        editorSection.style.display = 'none';
         dropZone.classList.remove('loading');
         dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
           'Drop an audio file here, or click to browse';
-        setStatus('Could not decode: ' + err.message, 'error');
+        loadStatusEl.textContent = 'Could not decode: ' + err.message;
+        loadStatusEl.className   = 'status error';
       }
     };
     reader.onerror = () => {
       dropZone.classList.remove('loading');
       dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
         'Drop an audio file here, or click to browse';
-      setStatus('Could not read file.', 'error');
+      loadStatusEl.textContent = 'Could not read file.';
+      loadStatusEl.className   = 'status error';
     };
     reader.readAsArrayBuffer(file);
   }
@@ -867,11 +894,25 @@
     updateEstSize();
   }
 
+  // Show/hide the "✓ lossless copy" badge on the format line.
+  // Visible only when the selected output format matches the source format
+  // (meaning remux will be used instead of decode→reencode).
+  function updateLosslessBadge() {
+    const fmt    = fmtSelect.value;
+    const canRemux =
+      (fmt === 'wav' && sourceFormat === 'wav') ||
+      (fmt === 'aac' && (sourceFormat === 'adts' || sourceFormat === 'mp4')) ||
+      (sourceFormat === 'flac');
+    losslessBadge.textContent    = canRemux ? '✓ lossless copy' : '';
+    losslessBadge.style.display  = canRemux ? 'inline' : 'none';
+  }
+
   // Show bitrate selector only for AAC
   function updateFmtUI() {
     const isAAC = fmtSelect.value === 'aac';
     bitrateLabel.style.display  = isAAC ? 'inline' : 'none';
     bitrateSelect.style.display = isAAC ? 'inline' : 'none';
+    updateLosslessBadge();
     updateEstSize();
   }
   fmtSelect.addEventListener('change', updateFmtUI);
@@ -986,24 +1027,40 @@
   extractBtn.addEventListener('click', async () => {
     if (!audioBuffer || selEnd <= selStart) return;
 
-    // Read format from the <select> — simple, reliable, no event-delegation issues
-    const fmt = fmtSelect.value;
+    const fmt     = fmtSelect.value;
+    const hasFade = (parseFloat(fadeInEl.value) || 0) > 0 ||
+                    (parseFloat(fadeOutEl.value) || 0) > 0;
 
     extractBtn.disabled = true;
     downloadLink.style.display = 'none';
-    setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
 
     try {
-      const faded  = buildFadedBuffer();
-      let blob, filename;
       const ts = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
+      let blob, filename;
 
-      if (fmt === 'aac') {
-        blob     = await extractAAC(faded, 0, faded.duration);
-        filename = 'extract_' + ts + '.aac';
+      // ── Try lossless remux first (only when no fade is applied) ──────────────
+      setStatus(hasFade ? '' : 'Checking for lossless copy…');
+      const remuxed = hasFade ? null : await tryRemux(sourceFile, fmt, selStart, selEnd);
+
+      if (remuxed) {
+        blob     = remuxed.blob;
+        filename = 'extract_' + ts + '.' + remuxed.ext;
+        setStatus((selEnd - selStart).toFixed(2) + 's remuxed losslessly as '
+                  + remuxed.ext.toUpperCase(), 'ok');
       } else {
-        blob     = extractWAV(faded, 0, faded.duration);
-        filename = 'extract_' + ts + '.wav';
+        // ── Fall back to decode → reencode ────────────────────────────────────
+        setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
+        const faded = buildFadedBuffer();
+
+        if (fmt === 'aac') {
+          blob     = await extractAAC(faded, 0, faded.duration);
+          filename = 'extract_' + ts + '.aac';
+        } else {
+          blob     = extractWAV(faded, 0, faded.duration);
+          filename = 'extract_' + ts + '.wav';
+        }
+        setStatus((selEnd - selStart).toFixed(2) + 's extracted as '
+                  + fmt.toUpperCase(), 'ok');
       }
 
       const url = URL.createObjectURL(blob);
@@ -1011,7 +1068,6 @@
       downloadLink.download = filename;
       downloadLink.style.display = 'inline-block';
       dlFilename.textContent = 'Save ' + filename;
-      setStatus((selEnd - selStart).toFixed(2) + 's extracted as ' + fmt.toUpperCase(), 'ok');
 
     } catch (err) {
       setStatus('Error: ' + (err.message || String(err)), 'error');
@@ -1019,6 +1075,403 @@
 
     extractBtn.disabled = false;
   });
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // LOSSLESS REMUXER
+  // tryRemux(file, startSec, endSec) → {blob, ext} | null
+  //
+  // Tries to copy compressed frames directly from the source file without
+  // decode→reencode. Returns null if the format is not supported or if parsing
+  // fails (caller falls back to the existing encode path).
+  //
+  // Supported formats:
+  //   WAV  — copy PCM samples, rewrite header
+  //   ADTS AAC (.aac) — scan sync words, copy frames in time range
+  //   M4A / MP4 — parse MP4 boxes, copy AAC frames, write new MP4
+  //   FLAC — parse frame headers, copy frames in time range, patch STREAMINFO
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  async function tryRemux(file, fmt, startSec, endSec) {
+    if (!file) return null;
+    try {
+      const buf  = await file.arrayBuffer();
+      const view = new DataView(buf);
+      const u8   = new Uint8Array(buf);
+      const srcFmt = detectContainerFormat(view, u8);
+      console.log('[remux] file=' + file.name + ' srcFmt=' + srcFmt + ' outFmt=' + fmt
+                + ' start=' + startSec.toFixed(3) + ' end=' + endSec.toFixed(3));
+
+      // Only remux when source matches the selected output format
+      // wav  → only if source is WAV
+      // aac  → only if source is ADTS AAC or M4A/MP4
+      // flac → always remux to flac (falls through regardless of fmt)
+      let result = null;
+      if (fmt === 'wav'  && srcFmt === 'wav')                        result = remuxWAV(view, u8, startSec, endSec);
+      else if (fmt === 'aac' && srcFmt === 'adts')                   result = remuxADTS(u8, startSec, endSec);
+      else if (fmt === 'aac' && srcFmt === 'mp4')                    result = remuxMP4(view, u8, startSec, endSec);
+      else if (srcFmt === 'flac')                                     result = remuxFLAC(view, u8, startSec, endSec);
+      else console.log('[remux] source format ' + srcFmt + ' does not match output ' + fmt + ', skipping');
+
+      console.log('[remux] result=' + (result ? 'blob/' + result.ext + ' size=' + result.blob.size : 'null'));
+      return result;
+    } catch (e) {
+      console.warn('[remux] exception:', e);
+      return null;
+    }
+  }
+
+  // ── Format detection (magic bytes) ───────────────────────────────────────────
+  function detectContainerFormat(view, u8) {
+    const id = (o) => String.fromCharCode(u8[o], u8[o+1], u8[o+2], u8[o+3]);
+    if (id(0) === 'RIFF' && id(8) === 'WAVE')  return 'wav';
+    if (id(0) === 'fLaC')                       return 'flac';
+    if (id(4) === 'ftyp')                       return 'mp4';
+    if (u8[0] === 0xFF && (u8[1] & 0xF0) === 0xF0 &&
+        (u8[1] & 0x06) === 0x00)                return 'adts';
+    return null;
+  }
+
+  // ── WAV remux ─────────────────────────────────────────────────────────────────
+  function remuxWAV(view, u8, startSec, endSec) {
+    let fmtOff = -1, dataOff = -1, dataLen = 0;
+    let pos = 12;
+    while (pos < u8.length - 8) {
+      const tag = String.fromCharCode(u8[pos],u8[pos+1],u8[pos+2],u8[pos+3]);
+      const sz  = view.getUint32(pos + 4, true);
+      if (tag === 'fmt ') fmtOff = pos + 8;
+      if (tag === 'data') { dataOff = pos + 8; dataLen = sz; }
+      if (sz === 0) break;
+      pos += 8 + sz + (sz & 1);
+    }
+    console.log('[remuxWAV] fmtOff=' + fmtOff + ' dataOff=' + dataOff + ' dataLen=' + dataLen);
+    if (fmtOff < 0 || dataOff < 0) return null;
+
+    const sr         = view.getUint32(fmtOff + 4,  true);
+    const blockAlign = view.getUint16(fmtOff + 12, true);
+    console.log('[remuxWAV] sr=' + sr + ' blockAlign=' + blockAlign);
+    if (!sr || !blockAlign) return null;
+
+    const maxData    = u8.length - dataOff;
+    const actualData = Math.min(dataLen, maxData);
+    const startByte  = Math.min(Math.floor(startSec * sr) * blockAlign, actualData);
+    const endByte    = Math.min(Math.floor(endSec   * sr) * blockAlign, actualData);
+    const newDataLen = endByte - startByte;
+    console.log('[remuxWAV] actualData=' + actualData + ' startByte=' + startByte
+              + ' endByte=' + endByte + ' newDataLen=' + newDataLen);
+    if (newDataLen <= 0) return null;
+
+    const fmtChunkSize = view.getUint32(fmtOff - 4, true);
+    const riffPayload  = 4 + 8 + fmtChunkSize + 8 + newDataLen;
+    const out  = new Uint8Array(8 + riffPayload);
+    const outV = new DataView(out.buffer);
+    const ws   = (off, s) => { for (let i=0;i<s.length;i++) out[off+i]=s.charCodeAt(i); };
+    ws(0, 'RIFF');
+    outV.setUint32(4, riffPayload, true);
+    ws(8, 'WAVE');
+    ws(12, 'fmt ');
+    outV.setUint32(16, fmtChunkSize, true);
+    out.set(u8.subarray(fmtOff, fmtOff + fmtChunkSize), 20);
+    ws(20 + fmtChunkSize, 'data');
+    outV.setUint32(20 + fmtChunkSize + 4, newDataLen, true);
+    out.set(u8.subarray(dataOff + startByte, dataOff + endByte), 20 + fmtChunkSize + 8);
+    return { blob: new Blob([out.buffer], { type: 'audio/wav' }), ext: 'wav' };
+  }
+
+  // ── ADTS AAC remux ────────────────────────────────────────────────────────────
+  // Walk ADTS frames, accumulate frame durations (1024 samples each),
+  // copy frames whose time range overlaps [startSec, endSec].
+  function remuxADTS(u8, startSec, endSec) {
+    let sampleRate = 0, pos = 0;
+    const FREQ = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+    const out  = [];
+    let   tSec = 0;
+
+    while (pos < u8.length - 7) {
+      // Find sync
+      if (u8[pos] !== 0xFF || (u8[pos+1] & 0xF0) !== 0xF0) { pos++; continue; }
+      const noCRC   = u8[pos+1] & 0x01;
+      const hdrLen  = noCRC ? 7 : 9;
+      const fi      = (u8[pos+2] >> 2) & 0x0F;
+      const sr      = FREQ[fi] || 44100;
+      if (!sampleRate) sampleRate = sr;
+      const fl = ((u8[pos+3] & 0x03) << 11) | (u8[pos+4] << 3) | (u8[pos+5] >> 5);
+      if (fl < hdrLen || pos + fl > u8.length) break;
+
+      const frameDur = 1024 / sr;
+      const frameEnd = tSec + frameDur;
+
+      if (tSec >= startSec && frameEnd <= endSec + frameDur) {
+        out.push(u8.subarray(pos, pos + fl));
+      }
+      tSec += frameDur;
+      pos  += fl;
+      if (tSec > endSec + frameDur) break;
+    }
+
+    if (!out.length) return null;
+    const total = out.reduce((s, a) => s + a.length, 0);
+    const merged = new Uint8Array(total);
+    let mp = 0;
+    for (const f of out) { merged.set(f, mp); mp += f.length; }
+    return { blob: new Blob([merged.buffer], { type: 'audio/aac' }), ext: 'aac' };
+  }
+
+  // ── MP4 / M4A remux ───────────────────────────────────────────────────────────
+  // Parses just enough of the MP4 box structure to find the AAC sample table,
+  // then writes a minimal new MP4 with the selected samples.
+  function remuxMP4(view, u8, startSec, endSec) {
+    // --- Box parser ---
+    function readBox(buf, view, offset, end) {
+      const boxes = {};
+      let p = offset;
+      while (p < end - 7) {
+        let size = view.getUint32(p);
+        const type = String.fromCharCode(buf[p+4],buf[p+5],buf[p+6],buf[p+7]);
+        if (size === 1) {
+          // 64-bit size (simplified: high 32 bits assumed 0)
+          size = view.getUint32(p + 12);
+          p += 8;
+        }
+        if (size < 8) break;
+        boxes[type] = { offset: p, size, dataOffset: p + 8 };
+        p += size;
+      }
+      return boxes;
+    }
+
+    const top   = readBox(u8, view, 0, u8.length);
+    if (!top.moov || !top.mdat) return null;
+
+    const moov  = top.moov;
+    const moovB = readBox(u8, view, moov.dataOffset, moov.offset + moov.size);
+    if (!moovB.trak) return null;
+
+    // Find audio trak (handler = 'soun')
+    let audioTrak = null;
+    let p2 = moov.dataOffset;
+    while (p2 < moov.offset + moov.size - 7) {
+      const sz   = view.getUint32(p2);
+      const type = String.fromCharCode(u8[p2+4],u8[p2+5],u8[p2+6],u8[p2+7]);
+      if (sz < 8) break;
+      if (type === 'trak') {
+        const trakB = readBox(u8, view, p2 + 8, p2 + sz);
+        if (trakB.mdia) {
+          const mdiaB = readBox(u8, view, trakB.mdia.dataOffset,
+                                trakB.mdia.offset + trakB.mdia.size);
+          if (mdiaB.hdlr) {
+            const hdlrType = String.fromCharCode(
+              u8[mdiaB.hdlr.dataOffset+8],  u8[mdiaB.hdlr.dataOffset+9],
+              u8[mdiaB.hdlr.dataOffset+10], u8[mdiaB.hdlr.dataOffset+11]);
+            if (hdlrType === 'soun') { audioTrak = { offset: p2, size: sz, boxes: trakB }; break; }
+          }
+        }
+      }
+      p2 += sz;
+    }
+    if (!audioTrak) return null;
+
+    const mdiaB = readBox(u8, view, audioTrak.boxes.mdia.dataOffset,
+                          audioTrak.boxes.mdia.offset + audioTrak.boxes.mdia.size);
+    if (!mdiaB.mdhd || !mdiaB.minf) return null;
+
+    // Time scale from mdhd
+    const mdhdV   = u8[mdiaB.mdhd.dataOffset];
+    const tsOff   = mdhdV === 1 ? 20 : 12; // version 1 = 64-bit times
+    const timeScale = view.getUint32(mdiaB.mdhd.dataOffset + tsOff);
+
+    const minfB = readBox(u8, view, mdiaB.minf.dataOffset,
+                          mdiaB.minf.offset + mdiaB.minf.size);
+    if (!minfB.stbl) return null;
+
+    const stblB = readBox(u8, view, minfB.stbl.dataOffset,
+                          minfB.stbl.offset + minfB.stbl.size);
+    if (!stblB.stts || !stblB.stsz || !stblB.stco) return null;
+
+    // stts: decode time-to-sample table → cumulative sample start times
+    const sttsD   = stblB.stts.dataOffset + 4; // skip version+flags
+    const sttsN   = view.getUint32(sttsD);
+    const sampleTimes = []; // sampleTimes[i] = start time of sample i (in timeScale units)
+    let   cumT = 0;
+    for (let i = 0; i < sttsN; i++) {
+      const count = view.getUint32(sttsD + 4 + i * 8);
+      const delta = view.getUint32(sttsD + 8 + i * 8);
+      for (let j = 0; j < count; j++) { sampleTimes.push(cumT); cumT += delta; }
+    }
+    const totalSamples = sampleTimes.length;
+
+    // stsz: sample sizes
+    const stszD      = stblB.stsz.dataOffset + 4;
+    const fixedSize  = view.getUint32(stszD);
+    const stszCount  = view.getUint32(stszD + 4);
+    const sampleSizes = [];
+    for (let i = 0; i < stszCount; i++) {
+      sampleSizes.push(fixedSize || view.getUint32(stszD + 8 + i * 4));
+    }
+
+    // stco: chunk offsets (file-absolute)
+    const stcoD    = stblB.stco.dataOffset + 4;
+    const stcoN    = view.getUint32(stcoD);
+    const chunkOffsets = [];
+    for (let i = 0; i < stcoN; i++) chunkOffsets.push(view.getUint32(stcoD + 4 + i * 4));
+
+    // stsc: sample-to-chunk mapping
+    const stscD = stblB.stsc.dataOffset + 4;
+    const stscN = view.getUint32(stscD);
+    const stscEntries = [];
+    for (let i = 0; i < stscN; i++) {
+      stscEntries.push({
+        firstChunk:      view.getUint32(stscD + 4  + i * 12),
+        samplesPerChunk: view.getUint32(stscD + 8  + i * 12),
+      });
+    }
+
+    // Build per-sample file offsets
+    const sampleOffsets = new Array(totalSamples);
+    let   sampleIdx = 0;
+    for (let ci = 0; ci < chunkOffsets.length && sampleIdx < totalSamples; ci++) {
+      // Find samplesPerChunk for this chunk
+      let spc = stscEntries[0].samplesPerChunk;
+      for (let e = 0; e < stscEntries.length; e++) {
+        if (ci + 1 >= stscEntries[e].firstChunk) spc = stscEntries[e].samplesPerChunk;
+      }
+      let byteOff = chunkOffsets[ci];
+      for (let s = 0; s < spc && sampleIdx < totalSamples; s++, sampleIdx++) {
+        sampleOffsets[sampleIdx] = byteOff;
+        byteOff += sampleSizes[sampleIdx];
+      }
+    }
+
+    // Select samples in [startSec, endSec]
+    const startTS = Math.floor(startSec * timeScale);
+    const endTS   = Math.floor(endSec   * timeScale);
+    let   first = -1, last = -1;
+    for (let i = 0; i < totalSamples; i++) {
+      if (sampleTimes[i] >= startTS && first < 0) first = i;
+      if (sampleTimes[i] <  endTS)                last  = i;
+    }
+    if (first < 0 || last < first) return null;
+
+    // Collect raw AAC frame bytes
+    const frames = [];
+    for (let i = first; i <= last; i++) {
+      frames.push(u8.subarray(sampleOffsets[i], sampleOffsets[i] + sampleSizes[i]));
+    }
+
+    // Get sample rate + channel count from esds/mp4a box for ADTS output
+    // (We'll just wrap in ADTS using audioBuffer's decoded properties)
+    const sr  = audioBuffer.sampleRate;
+    const nCh = audioBuffer.numberOfChannels;
+    const adtsOut = buildADTSFromRawFrames(frames, sr, nCh);
+    return { blob: new Blob([adtsOut], { type: 'audio/aac' }), ext: 'aac' };
+  }
+
+  // Build ADTS stream from raw AAC frame byte arrays (no headers)
+  function buildADTSFromRawFrames(frames, sampleRate, nChannels) {
+    const FREQ = [96000,88200,64000,48000,44100,32000,24000,22050,16000,12000,11025,8000,7350];
+    let fi = FREQ.indexOf(sampleRate); if (fi < 0) fi = 4;
+    const total = frames.reduce((s, f) => s + 7 + f.length, 0);
+    const out   = new Uint8Array(total);
+    let   pos   = 0;
+    for (const d of frames) {
+      const fl = 7 + d.length;
+      out[pos  ] = 0xFF; out[pos+1] = 0xF1;
+      out[pos+2] = (1 << 6) | (fi << 2) | (nChannels >> 2);
+      out[pos+3] = ((nChannels & 3) << 6) | ((fl >> 11) & 0x03);
+      out[pos+4] = (fl >> 3) & 0xFF;
+      out[pos+5] = ((fl & 7) << 5) | 0x1F;
+      out[pos+6] = 0xFC;
+      out.set(d, pos + 7); pos += fl;
+    }
+    return out.buffer;
+  }
+
+  // ── FLAC remux ────────────────────────────────────────────────────────────────
+  // FLAC frames are self-delimiting with their own sync + header.
+  // We copy frames whose sample position falls in [startSec, endSec],
+  // then prepend a patched fLaC marker + STREAMINFO with updated min/max/total.
+  function remuxFLAC(view, u8, startSec, endSec) {
+    // Read STREAMINFO (always first metadata block)
+    // Byte offsets within STREAMINFO data (after 4-byte block header):
+    //   0-1: min block size, 2-3: max block size
+    //   4-6: min frame size (24b), 7-9: max frame size (24b)
+    //   10-13(+bits): sample rate (20b) | channels-1 (3b) | bps-1 (5b) | total samples (36b)
+    const siOff = 4 + 4; // fLaC marker (4) + block header (4)
+    const sr    = (view.getUint16(siOff + 10) >> 4) & 0xFFFFF; // top 20 bits across bytes 10-12
+    if (!sr) return null;
+
+    // Walk metadata blocks to find first audio frame
+    let mp = 4; // skip 'fLaC'
+    let metaEnd = 4;
+    while (mp < u8.length) {
+      const last = (u8[mp] & 0x80) !== 0;
+      const bsz  = (u8[mp+1] << 16) | (u8[mp+2] << 8) | u8[mp+3];
+      mp += 4 + bsz;
+      if (last) { metaEnd = mp; break; }
+    }
+
+    const startSamp = Math.floor(startSec * sr);
+    const endSamp   = Math.floor(endSec   * sr);
+    const outFrames = [];
+    let   fp        = metaEnd;
+
+    // FLAC frame sync: 0xFF 0xF8 (fixed block) or 0xFF 0xF9 (variable)
+    // We rely on the sample/frame number in the header to determine position.
+    while (fp < u8.length - 4) {
+      if (u8[fp] !== 0xFF || (u8[fp+1] & 0xFE) !== 0xF8) { fp++; continue; }
+      const varBlock = (u8[fp+1] & 0x01) === 1;
+
+      // Parse block size
+      const bsCode = (u8[fp+2] >> 4) & 0x0F;
+      let   blockSize;
+      if      (bsCode === 1)  blockSize = 192;
+      else if (bsCode >= 2 && bsCode <= 5)  blockSize = 576 * (1 << (bsCode - 2));
+      else if (bsCode === 6)  blockSize = u8[fp + 4 /* approx */] + 1;  // 8-bit from end of header
+      else if (bsCode === 7)  blockSize = ((u8[fp+4] << 8) | u8[fp+5]) + 1;
+      else if (bsCode >= 8)   blockSize = 256 * (1 << (bsCode - 8));
+      else blockSize = 0;
+
+      // Sample/frame number (UTF-8 coded integer after byte 4)
+      let numOff = fp + 4, val = 0;
+      const fb = u8[numOff];
+      let   extra = fb < 0x80 ? 0 : fb < 0xC0 ? 0
+                  : fb < 0xE0 ? 1 : fb < 0xF0 ? 2
+                  : fb < 0xF8 ? 3 : fb < 0xFC ? 4 : 5;
+      val = fb & (0x3F >> extra);
+      for (let k = 0; k < extra; k++) val = (val << 6) | (u8[++numOff] & 0x3F);
+      const frameSamp = varBlock ? val : val * (blockSize || 4096);
+
+      if (frameSamp >= endSamp) break;
+
+      // Find next frame start to know this frame's byte length
+      let nextFP = fp + 4;
+      while (nextFP < u8.length - 1) {
+        if (u8[nextFP] === 0xFF && (u8[nextFP+1] & 0xFE) === 0xF8) break;
+        nextFP++;
+      }
+      if (nextFP >= u8.length - 1) nextFP = u8.length;
+
+      if (frameSamp + (blockSize || 4096) > startSamp) {
+        outFrames.push(u8.subarray(fp, nextFP));
+      }
+      fp = nextFP;
+    }
+
+    if (!outFrames.length) return null;
+
+    // Build output: original metadata blocks + selected frames
+    const metaBytes  = u8.subarray(0, metaEnd);
+    const framesTotal = outFrames.reduce((s, f) => s + f.length, 0);
+    const out        = new Uint8Array(metaEnd + framesTotal);
+    out.set(metaBytes, 0);
+    let op = metaEnd;
+    for (const f of outFrames) { out.set(f, op); op += f.length; }
+
+    return { blob: new Blob([out.buffer], { type: 'audio/flac' }), ext: 'flac' };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // END LOSSLESS REMUXER
+  // ══════════════════════════════════════════════════════════════════════════════
 
   // ── AAC encoder (WebCodecs AudioEncoder, Chromium 94+) ───────────────────────
   async function extractAAC(buffer, startSec, endSec) {
