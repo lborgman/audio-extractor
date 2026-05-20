@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Extractor</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <style>
+    /* ── Reset ─────────────────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Base
+         Background: #0f0f0f  Body text: #d4d4d4 (11.4:1)
+         All label/secondary text: #999 (5.4:1) — passes WCAG AA            */
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 16px;
+      line-height: 1.5;
+      background: #0f0f0f;
+      color: #d4d4d4;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 3rem 1rem;
+    }
+
+    .container { width: 100%; max-width: 720px; }
+
+    /* ── Header ─────────────────────────────────────────────────────────────── */
+    header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 2.5rem;
+    }
+    header img { display: block; border-radius: 8px; }
+    header h1 {
+      font-size: 15px;
+      font-weight: normal;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: #999; /* 5.4:1 on #0f0f0f — passes AA */
+    }
+    header .credit {
+      font-size: 12px;
+      color: #555;
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+
+    /* ── Sections ────────────────────────────────────────────────────────────── */
+    .section { margin-bottom: 2rem; }
+    .divider { border: none; border-top: 1px solid #2a2a2a; margin: 2rem 0; }
+
+    /* ── Labels (above fields) — 13px bold gives AA at 3:1 for large/bold text */
+    .label {
+      font-size: 13px;
+      font-weight: bold;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #999; /* 5.4:1 */
+      margin-bottom: 8px;
+    }
+
+    /* ── Drop zone ────────────────────────────────────────────────────────────── */
+    .drop-zone {
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 2.5rem;
+      text-align: center;
+      color: #999;
+      font-size: 16px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s, background 0.2s;
+    }
+    .drop-zone:hover,
+    .drop-zone.drag-over { border-color: #666; color: #d4d4d4; background: #1a1a1a; }
+    .drop-zone:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+    .drop-zone .dz-icon { font-size: 2rem; display: block; margin-bottom: 8px; }
+    .drop-zone input[type="file"] { display: none; }
+    .drop-zone.loaded { color: #d4d4d4; border-color: #4a4a4a; }
+    .dz-filename {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+    .drop-zone.loading { border-color: #8ab4f8; color: #8ab4f8; cursor: default; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 28px; height: 28px;
+      border: 2px solid #2a2a2a;
+      border-top-color: #8ab4f8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin-bottom: 8px;
+    }
+
+    /* ── Canvas ────────────────────────────────────────────────────────────────── */
+    canvas#waveform {
+      width: 100%;
+      height: 100px;
+      display: block;
+      border-radius: 6px;
+      background: #1a1a1a;
+      cursor: default;
+      touch-action: none;
+    }
+    canvas#waveform:focus-visible { outline: 2px solid #8ab4f8; }
+
+    /* ── Zoom / pan sliders ───────────────────────────────────────────────────── */
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .slider-row-label {
+      font-size: 14px;
+      color: #999;
+      white-space: nowrap;
+      width: 40px;
+    }
+    .slider-val {
+      font-size: 14px;
+      color: #999;
+      width: 36px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+    input[type="range"] {
+      -webkit-appearance: none;
+      flex: 1;
+      height: 3px;
+      background: #3a3a3a;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+    input[type="range"]:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 3px; border-radius: 2px; }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      background: #d4d4d4;
+      border-radius: 50%;
+      cursor: pointer;
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px; height: 16px;
+      background: #d4d4d4;
+      border-radius: 50%;
+      border: none;
+      cursor: pointer;
+    }
+    #pan-row { display: flex; }
+    #pan-row.inert-pan { opacity: 0.5; pointer-events: none; }
+
+    /* ── Info bar ──────────────────────────────────────────────────────────────── */
+    .info-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem 2rem;
+      margin-top: 8px;
+      font-size: 14px;
+      color: #999;
+    }
+
+    /* ── Time inputs ────────────────────────────────────────────────────────────── */
+    .time-row { display: flex; gap: 1rem; }
+    .time-field { flex: 1; }
+    .time-field label {
+      font-size: 14px;
+      color: #999;
+      display: block;
+      margin-bottom: 6px;
+    }
+    .time-field input[type="number"] {
+      width: 100%;
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #d4d4d4;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 16px;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .time-field input[type="number"]:focus { border-color: #8ab4f8; }
+    .time-field input[type="number"]:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 0; }
+    input[type="number"]::-webkit-inner-spin-button { opacity: 0.5; }
+
+    /* ── Format select ─────────────────────────────────────────────────────────── */
+    .fmt-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .fmt-row label { font-size: 14px; color: #999; }
+    .fmt-row select {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 15px;
+      background: #1a1a1a;
+      color: #d4d4d4;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 8px 12px;
+      outline: none;
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .fmt-row select:focus { border-color: #8ab4f8; }
+    .fmt-row select:focus-visible { outline: 2px solid #8ab4f8; }
+    #bitrate-label,
+    #bitrate-select { display: none; }
+    #est-size {
+      font-size: 14px;
+      color: #999;
+      white-space: nowrap;
+    }
+
+    /* ── Fade row ──────────────────────────────────────────────────────────────── */
+    .fade-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .fade-row label { font-size: 14px; color: #999; white-space: nowrap; }
+    .fade-row input[type="number"] {
+      width: 80px;
+      background: #1a1a1a;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      color: #d4d4d4;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 15px;
+      padding: 8px 10px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .fade-row input[type="number"]:focus { border-color: #8ab4f8; }
+
+    /* ── Action buttons ────────────────────────────────────────────────────────── */
+    .btn-row { display: flex; gap: 10px; margin-top: 1.5rem; align-items: center; flex-wrap: wrap; }
+    button {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 15px;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 9px 18px;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    button:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+
+    #play-btn {
+      background: transparent;
+      border: 1px solid #3a3a3a;
+      color: #d4d4d4; /* 11.4:1 */
+    }
+    #play-btn:hover { border-color: #666; background: #1a1a1a; }
+
+    #extract-btn {
+      background: #d4d4d4;
+      border: 1px solid #d4d4d4;
+      color: #0f0f0f; /* 11.4:1 on #d4d4d4 */
+      font-weight: bold;
+    }
+    #extract-btn:hover:not(:disabled) { background: #ffffff; border-color: #ffffff; }
+    #extract-btn:disabled { background: #2a2a2a; border-color: #2a2a2a; color: #666; cursor: not-allowed; }
+
+    /* ── Status ────────────────────────────────────────────────────────────────── */
+    .status {
+      font-size: 15px;
+      color: #999;
+      margin-top: 1rem;
+      min-height: 1.5em;
+    }
+    /* Error: #ff8a80 = 6.5:1 on #0f0f0f  ✓ */
+    .status.error { color: #ff8a80; }
+    /* OK: #86efac = 8.5:1 on #0f0f0f  ✓ */
+    .status.ok    { color: #86efac; }
+
+    /* ── Download link ─────────────────────────────────────────────────────────── */
+    #download-link {
+      display: none;
+      margin-top: 1rem;
+      font-size: 15px;
+      color: #8ab4f8; /* 5.2:1 on #0f0f0f ✓ */
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      border: 1px solid #3a3a3a;
+      border-radius: 6px;
+      padding: 9px 18px;
+      letter-spacing: 0.04em;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    #download-link:hover { border-color: #8ab4f8; color: #aecbfa; }
+    #download-link:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ── Header ── -->
+  <header>
+    <img src="favicon.svg" width="44" height="44" alt="Audio Extractor logo">
+    <div>
+      <h1>Audio Extractor</h1>
+      <div class="credit">(made by Claude AI, ver 17)</div>
+    </div>
+  </header>
+
+  <!-- ── File drop ── -->
+  <!-- File input lives outside drop zone so replacing dropZone.innerHTML never detaches it -->
+  <input type="file" id="file-input" accept="audio/*" style="display:none">
+  <div class="section">
+    <div class="label">Source file</div>
+    <div class="drop-zone" id="drop-zone" tabindex="0" role="button"
+         aria-label="Upload audio file. Click or drop a file here.">
+      <span class="dz-icon" aria-hidden="true">♪</span>
+      Drop an audio file here, or click to browse
+    </div>
+  </div>
+
+  <!-- ── Editor (hidden until file loaded) ── -->
+  <div id="editor-section" style="display:none">
+    <hr class="divider">
+
+    <!-- Waveform -->
+    <div class="section">
+      <div class="label">Waveform — tap S/E markers to move · scroll or pinch to zoom</div>
+      <canvas id="waveform" width="680" height="100"
+              tabindex="0" role="img" aria-label="Audio waveform"></canvas>
+
+      <div class="slider-row">
+        <label class="slider-row-label" for="zoom-slider">Zoom</label>
+        <input type="range" id="zoom-slider" min="1" max="32" step="1" value="1"
+               aria-label="Zoom level">
+        <span class="slider-val" id="zoom-val" aria-live="polite">1×</span>
+      </div>
+
+      <div class="slider-row" id="pan-row">
+        <label class="slider-row-label" for="pan-slider">Pan</label>
+        <input type="range" id="pan-slider" min="0" max="1" step="0.001" value="0"
+               aria-label="Pan position">
+      </div>
+
+      <div class="info-bar" aria-live="polite">
+        <span id="dur-label">Duration: —</span>
+        <span id="sel-label">Selected: —</span>
+      </div>
+    </div>
+
+    <!-- Region -->
+    <div class="section">
+      <div class="label">Region</div>
+      <div class="time-row">
+        <div class="time-field">
+          <label for="start-input">Start (seconds)</label>
+          <input type="number" id="start-input" min="0" step="0.01" value="0">
+        </div>
+        <div class="time-field">
+          <label for="end-input">End (seconds)</label>
+          <input type="number" id="end-input" min="0" step="0.01" value="0">
+        </div>
+      </div>
+    </div>
+
+    <!-- Format -->
+    <div class="section">
+      <div class="label">Output format</div>
+      <div class="fmt-row">
+        <label for="fmt-select">Format</label>
+        <select id="fmt-select">
+          <option value="aac">AAC</option>
+          <option value="wav">WAV</option>
+        </select>
+        <label for="bitrate-select" id="bitrate-label">Bitrate</label>
+        <select id="bitrate-select">
+          <option value="96000">96 kbps</option>
+          <option value="128000" selected>128 kbps</option>
+          <option value="160000">160 kbps</option>
+          <option value="192000">192 kbps</option>
+        </select>
+        <span id="est-size"></span>
+      </div>
+    </div>
+
+    <!-- Fade -->
+    <div class="section">
+      <div class="label">Fade</div>
+      <div class="fade-row">
+        <label for="fade-in">Fade in (s)</label>
+        <input type="number" id="fade-in"  min="0" step="0.01" value="0">
+        <label for="fade-out">Fade out (s)</label>
+        <input type="number" id="fade-out" min="0" step="0.01" value="0">
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="btn-row">
+      <button id="play-btn" type="button">▶ Preview</button>
+      <button id="extract-btn" type="button" disabled>✂ Extract &amp; download</button>
+    </div>
+
+    <div class="status" id="status" role="status" aria-live="polite">
+      Drag the S and E markers on the waveform, or type times below
+    </div>
+    <a id="download-link" href="#" download>↓ <span id="dl-filename">Save file</span></a>
+  </div>
+
+</div><!-- /.container -->
+
+<script>
+(function () {
+  'use strict';
+
+  // ── DOM refs ────────────────────────────────────────────────────────────────
+  const dropZone      = document.getElementById('drop-zone');
+  const fileInput     = document.getElementById('file-input');
+  const editorSection = document.getElementById('editor-section');
+  const canvas        = document.getElementById('waveform');
+  const ctx2d         = canvas.getContext('2d');
+  const startInput    = document.getElementById('start-input');
+  const endInput      = document.getElementById('end-input');
+  const fmtSelect     = document.getElementById('fmt-select');
+  const bitrateSelect = document.getElementById('bitrate-select');
+  const bitrateLabel  = document.getElementById('bitrate-label');
+  const estSizeEl     = document.getElementById('est-size');
+  const playBtn       = document.getElementById('play-btn');
+  const extractBtn    = document.getElementById('extract-btn');
+  const fadeInEl      = document.getElementById('fade-in');
+  const fadeOutEl     = document.getElementById('fade-out');
+  const statusEl      = document.getElementById('status');
+  const durLabel      = document.getElementById('dur-label');
+  const selLabel      = document.getElementById('sel-label');
+  const downloadLink  = document.getElementById('download-link');
+  const dlFilename    = document.getElementById('dl-filename');
+  const zoomSlider    = document.getElementById('zoom-slider');
+  const zoomValEl     = document.getElementById('zoom-val');
+  const panSlider     = document.getElementById('pan-slider');
+  const panRow        = document.getElementById('pan-row');
+
+  // ── State ───────────────────────────────────────────────────────────────────
+  let audioCtx    = null;
+  let audioBuffer = null;
+  let selStart    = 0;
+  let selEnd      = 0;
+  let previewSrc  = null;
+  let zoomLevel   = 1;
+  let viewStart   = 0;   // seconds
+
+  // Offscreen canvas caches the waveform bars so drawWaveform() during
+  // marker drag is just drawImage + a few primitives — no per-sample loop.
+  const offscreen    = document.createElement('canvas');
+  const offCtx       = offscreen.getContext('2d');
+  let   waveformDirty = true; // set true whenever cache needs rebuilding
+
+  // Marker dragging: null | 'S' | 'E'
+  let draggingMarker = null;
+
+  // Pinch
+  let pinching   = false;
+  let pinchDist0 = 0;
+  let pinchZoom0 = 1;
+  let pinchVS0   = 0;
+  let pinchMidR  = 0.5;
+
+
+
+  // ── AudioContext (lazy, avoids autoplay policy warnings) ────────────────────
+  function getAC() {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  // ── Status helper ────────────────────────────────────────────────────────────
+  function setStatus(msg, cls) {
+    statusEl.textContent = msg;
+    statusEl.className   = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  // ── Zoom helpers ─────────────────────────────────────────────────────────────
+  function visDur() {
+    return audioBuffer ? audioBuffer.duration / zoomLevel : 0;
+  }
+
+  function clampVS(vs, zoom) {
+    const vd = audioBuffer.duration / zoom;
+    return Math.max(0, Math.min(audioBuffer.duration - vd, vs));
+  }
+
+  function applyZoom(newZoom, newVS) {
+    zoomLevel = Math.max(1, Math.min(32, newZoom));
+    viewStart = clampVS(newVS !== undefined ? newVS : viewStart, zoomLevel);
+    zoomSlider.value      = Math.round(zoomLevel);
+    zoomValEl.textContent = (zoomLevel % 1 === 0 ? zoomLevel : zoomLevel.toFixed(1)) + '×';
+    const zoomed = zoomLevel > 1.001;
+    panRow.classList.toggle('inert-pan', !zoomed);
+    if (zoomed) {
+      const maxVS = audioBuffer.duration - visDur();
+      panSlider.value = maxVS > 0 ? (viewStart / maxVS).toFixed(4) : 0;
+    }
+    waveformDirty = true;
+    drawWaveform();
+  }
+
+  zoomSlider.addEventListener('input', () => {
+    const newZoom = parseInt(zoomSlider.value, 10);
+    const centre  = viewStart + visDur() / 2;
+    applyZoom(newZoom, centre - (audioBuffer.duration / newZoom) / 2);
+  });
+
+  panSlider.addEventListener('input', () => {
+    if (!audioBuffer) return;
+    viewStart = parseFloat(panSlider.value) * (audioBuffer.duration - visDur());
+    waveformDirty = true;
+    drawWaveform();
+  });
+
+  canvas.addEventListener('wheel', e => {
+    if (!audioBuffer) return;
+    e.preventDefault();
+    const rect   = canvas.getBoundingClientRect();
+    const ratio  = (e.clientX - rect.left) / rect.width;
+    const anchor = viewStart + ratio * visDur();
+    const newZ   = Math.max(1, Math.min(32, zoomLevel * (e.deltaY < 0 ? 1.25 : 0.8)));
+    applyZoom(newZ, anchor - ratio * (audioBuffer.duration / newZ));
+  }, { passive: false });
+
+  // ── Waveform cache ────────────────────────────────────────────────────────────
+  // Renders waveform bars into offscreen canvas once per zoom/pan/file change.
+  // drawWaveform() then just blits the cache + overlays markers — no sample loop.
+  function buildWaveformCache() {
+    if (!audioBuffer) return;
+    const W  = canvas.width;
+    const H  = canvas.height;
+    offscreen.width  = W;
+    offscreen.height = H;
+
+    const sr   = audioBuffer.sampleRate;
+    const data = audioBuffer.getChannelData(0);
+    const vd   = visDur();
+    const ve   = viewStart + vd;
+
+    const sStart = Math.max(0, Math.floor(viewStart * sr));
+    const sEnd   = Math.min(data.length, Math.ceil(ve * sr));
+    const step   = Math.max(1, Math.ceil((sEnd - sStart) / W));
+
+    offCtx.clearRect(0, 0, W, H);
+    offCtx.fillStyle = '#444';
+    for (let x = 0; x < W; x++) {
+      let mn = 1, mx = -1;
+      const off = sStart + x * step;
+      for (let j = 0; j < step; j++) {
+        const v = data[off + j] || 0;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      const yTop = H / 2 - mx * (H / 2) * 0.9;
+      offCtx.fillRect(x, yTop, 1, Math.max(1, (H / 2 - mn * (H / 2) * 0.9) - yTop));
+    }
+    waveformDirty = false;
+  }
+
+  // ── Fast draw (blit cache + highlight + markers) ──────────────────────────────
+  function drawWaveform() {
+    if (!audioBuffer) return;
+    if (waveformDirty) buildWaveformCache();
+
+    const W  = canvas.width;
+    const H  = canvas.height;
+    const vd = visDur();
+    const toX = t => ((t - viewStart) / vd) * W;
+    const x0  = Math.round(toX(selStart));
+    const x1  = Math.round(toX(selEnd));
+    const cx0 = Math.max(0, x0);
+    const cx1 = Math.min(W, x1);
+
+    ctx2d.clearRect(0, 0, W, H);
+
+    // 1. Blit cached bars (the expensive part, done once)
+    ctx2d.drawImage(offscreen, 0, 0);
+
+    // 2. Lighten bars inside the selection
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = 'source-atop';
+    ctx2d.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx2d.fillRect(cx0, 0, cx1 - cx0, H);
+    ctx2d.restore();
+
+    // 3. Subtle background tint for selected region
+    ctx2d.save();
+    ctx2d.globalCompositeOperation = 'destination-over';
+    ctx2d.fillStyle = 'rgba(255,255,255,0.05)';
+    ctx2d.fillRect(cx0, 0, cx1 - cx0, H);
+    ctx2d.restore();
+
+    // 4. Markers
+    function drawMarker(label, xc, color) {
+      const TW = 13, TH = 20;
+      const xd = Math.max(TW, Math.min(W - TW, xc));
+      ctx2d.fillStyle = color;
+      ctx2d.fillRect(xd - 1, 0, 2, H);
+      ctx2d.beginPath();
+      ctx2d.moveTo(xd - TW, 0);
+      ctx2d.lineTo(xd + TW, 0);
+      ctx2d.lineTo(xd,       TH);
+      ctx2d.closePath();
+      ctx2d.fill();
+      ctx2d.fillStyle    = '#0f0f0f';
+      ctx2d.font         = 'bold 11px monospace';
+      ctx2d.textAlign    = 'center';
+      ctx2d.textBaseline = 'top';
+      ctx2d.fillText(label, xd, 3);
+    }
+    drawMarker('S', x0, '#4ade80');
+    drawMarker('E', x1, '#f87171');
+
+    // 5. Info bar — skip DOM writes while dragging to avoid layout work
+    if (!draggingMarker) {
+      durLabel.textContent = 'Duration: ' + audioBuffer.duration.toFixed(2) + 's';
+      selLabel.textContent = 'Selected: '  + selStart.toFixed(2) + 's – ' + selEnd.toFixed(2) +
+                             's  (' + (selEnd - selStart).toFixed(2) + 's)';
+    }
+  }
+
+  // ── Coordinate helpers ────────────────────────────────────────────────────────
+  function pxToTime(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    return Math.max(0, Math.min(audioBuffer.duration,
+      viewStart + ((clientX - rect.left) / rect.width) * visDur()));
+  }
+
+  // Canvas-pixel x for a time value (using current bounding rect)
+  function timeToCssPx(t) {
+    const rect = canvas.getBoundingClientRect();
+    return ((t - viewStart) / visDur()) * rect.width;
+  }
+
+  // Visual (clamped) CSS-pixel position of a marker — matches where drawMarker
+  // actually renders the triangle handle (which is clamped to stay inside canvas).
+  function markerVisualCssPx(t) {
+    const rect   = canvas.getBoundingClientRect();
+    const scale  = rect.width / canvas.width; // CSS px per canvas px
+    const TW_css = 13 * scale;                // triangle half-width in CSS px
+    const raw    = timeToCssPx(t);
+    return Math.max(TW_css, Math.min(rect.width - TW_css, raw));
+  }
+
+  // Which marker is closest to clientX and within HIT_PX?
+  // Returns 'S', 'E', or null.
+  const HIT_PX = 28; // generous touch target
+  function hitMarker(clientX) {
+    const rect  = canvas.getBoundingClientRect();
+    const px    = clientX - rect.left;
+    const distS = Math.abs(px - markerVisualCssPx(selStart));
+    const distE = Math.abs(px - markerVisualCssPx(selEnd));
+    if (Math.min(distS, distE) > HIT_PX) return null;
+    // When overlapping, prefer E so it can always be dragged rightward
+    return distE <= distS ? 'E' : 'S';
+  }
+
+  // ── Marker drag helpers ───────────────────────────────────────────────────────
+  function startMarkerDrag(clientX) {
+    if (!audioBuffer) return;
+    const hit = hitMarker(clientX);
+    if (hit) {
+      draggingMarker = hit;
+    } else {
+      // Tap on empty area: snap nearest marker to that position
+      const t     = pxToTime(clientX);
+      const rect  = canvas.getBoundingClientRect();
+      const px    = clientX - rect.left;
+      const nearS = Math.abs(px - markerVisualCssPx(selStart));
+      const nearE = Math.abs(px - markerVisualCssPx(selEnd));
+      if (nearS <= nearE) {
+        selStart = Math.min(t, selEnd);
+        draggingMarker = 'S';
+      } else {
+        selEnd = Math.max(t, selStart);
+        draggingMarker = 'E';
+      }
+      updateInputs();
+      drawWaveform();
+    }
+    canvas.style.cursor = 'ew-resize';
+  }
+
+  function moveMarkerDrag(clientX) {
+    if (!draggingMarker || !audioBuffer) return;
+    const t = pxToTime(clientX);
+    if (draggingMarker === 'S') {
+      selStart = Math.min(t, selEnd);
+    } else {
+      selEnd = Math.max(t, selStart);
+    }
+    updateInputs();
+    drawWaveform();
+  }
+
+  function endMarkerDrag() {
+    if (!draggingMarker) return;
+    draggingMarker = null;
+    canvas.style.cursor = 'default';
+    // Now that dragging is done, flush updates to inputs and info bar
+    updateInputs();
+    durLabel.textContent = 'Duration: ' + audioBuffer.duration.toFixed(2) + 's';
+    selLabel.textContent = 'Selected: '  + selStart.toFixed(2) + 's – ' + selEnd.toFixed(2) +
+                           's  (' + (selEnd - selStart).toFixed(2) + 's)';
+    updateExtractBtn();
+  }
+
+  // ── Mouse events ──────────────────────────────────────────────────────────────
+  canvas.addEventListener('mousedown', e => {
+    if (!audioBuffer) return;
+    e.preventDefault();
+    startMarkerDrag(e.clientX);
+  });
+  canvas.addEventListener('mousemove', e => {
+    if (draggingMarker) {
+      moveMarkerDrag(e.clientX);
+    } else if (audioBuffer) {
+      canvas.style.cursor = hitMarker(e.clientX) ? 'ew-resize' : 'default';
+    }
+  });
+  window.addEventListener('mouseup', () => endMarkerDrag());
+
+  // ── Touch events ──────────────────────────────────────────────────────────────
+  canvas.addEventListener('touchstart', e => {
+    if (!audioBuffer) return;
+    e.preventDefault();
+    if (e.touches.length === 1) {
+      pinching = false;
+      startMarkerDrag(e.touches[0].clientX);
+    } else if (e.touches.length === 2) {
+      endMarkerDrag();
+      pinching   = true;
+      pinchDist0 = Math.abs(e.touches[1].clientX - e.touches[0].clientX);
+      pinchZoom0 = zoomLevel;
+      pinchVS0   = viewStart;
+      const rect = canvas.getBoundingClientRect();
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      pinchMidR  = (midX - rect.left) / rect.width;
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (e.touches.length === 1 && draggingMarker) {
+      moveMarkerDrag(e.touches[0].clientX);
+    } else if (e.touches.length === 2 && pinching) {
+      const dist   = Math.abs(e.touches[1].clientX - e.touches[0].clientX);
+      const scale  = pinchDist0 > 0 ? dist / pinchDist0 : 1;
+      const newZ   = Math.max(1, Math.min(32, pinchZoom0 * scale));
+      const anchor = pinchVS0 + pinchMidR * (audioBuffer.duration / pinchZoom0);
+      applyZoom(newZ, anchor - pinchMidR * (audioBuffer.duration / newZ));
+    }
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (e.touches.length === 0) {
+      endMarkerDrag();
+      pinching = false;
+    }
+    if (e.touches.length === 1 && pinching) {
+      // Lifted one finger during pinch — stop pinch, don't move markers
+      pinching = false;
+      endMarkerDrag();
+    }
+  }, { passive: false });
+
+  // ── File loading ──────────────────────────────────────────────────────────────
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+  });
+  dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+  function handleFile(file) {
+    setStatus('Reading file…');
+    downloadLink.style.display = 'none';
+    dropZone.classList.remove('loaded');
+    dropZone.classList.add('loading');
+    dropZone.innerHTML = '<div class="spinner" aria-hidden="true"></div>' +
+      '<span class="dz-filename">' + escapeHtml(file.name) + '</span>';
+
+    const reader = new FileReader();
+    reader.onload = async evt => {
+      try {
+        setStatus('Decoding audio…');
+        const ac = getAC();
+        audioBuffer = await ac.decodeAudioData(evt.target.result);
+
+        setStatus('Building waveform…');
+        // Yield to the browser so the status message renders before the
+        // (potentially slow) cache build blocks the main thread.
+        await new Promise(r => setTimeout(r, 0));
+        waveformDirty = true;
+        buildWaveformCache();
+
+        selStart = 0;
+        selEnd   = audioBuffer.duration;
+        editorSection.style.display = 'block';
+        dropZone.classList.remove('loading');
+        dropZone.classList.add('loaded');
+        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>' +
+          '<span class="dz-filename">' + escapeHtml(file.name) + '</span>';
+        applyZoom(1, 0);
+        updateInputs();
+        setStatus('Drag the S and E markers on the waveform, or type times below');
+        if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
+      } catch (err) {
+        dropZone.classList.remove('loading');
+        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
+          'Drop an audio file here, or click to browse';
+        setStatus('Could not decode: ' + err.message, 'error');
+      }
+    };
+    reader.onerror = () => {
+      dropZone.classList.remove('loading');
+      dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
+        'Drop an audio file here, or click to browse';
+      setStatus('Could not read file.', 'error');
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ── Time inputs ───────────────────────────────────────────────────────────────
+  function updateInputs() {
+    startInput.value = selStart.toFixed(2);
+    endInput.value   = selEnd.toFixed(2);
+    updateExtractBtn();
+    updateEstSize();
+  }
+
+  function updateExtractBtn() {
+    extractBtn.disabled = !audioBuffer || selEnd <= selStart;
+  }
+
+  startInput.addEventListener('input', syncTimeInputs);
+  endInput.addEventListener('input',   syncTimeInputs);
+  function syncTimeInputs() {
+    if (!audioBuffer) return;
+    const dur = audioBuffer.duration;
+    selStart = Math.max(0, Math.min(dur, parseFloat(startInput.value) || 0));
+    selEnd   = Math.max(selStart, Math.min(dur, parseFloat(endInput.value) || 0));
+    drawWaveform();
+    updateExtractBtn();
+    updateEstSize();
+  }
+
+  // Show bitrate selector only for AAC
+  function updateFmtUI() {
+    const isAAC = fmtSelect.value === 'aac';
+    bitrateLabel.style.display  = isAAC ? 'inline' : 'none';
+    bitrateSelect.style.display = isAAC ? 'inline' : 'none';
+    updateEstSize();
+  }
+  fmtSelect.addEventListener('change', updateFmtUI);
+  bitrateSelect.addEventListener('change', updateEstSize);
+  updateFmtUI(); // set initial state
+
+  // ── Estimated output file size ────────────────────────────────────────────────
+  // AAC:  bitrate (bits/s) × duration (s) / 8  → bytes  (+7-byte ADTS header per
+  //       frame is negligible, ~0.7% overhead at 128 kbps / 44.1 kHz)
+  // WAV:  sampleRate × channels × 2 bytes × duration
+  function updateEstSize() {
+    if (!audioBuffer || selEnd <= selStart) { estSizeEl.textContent = ''; return; }
+    const dur = selEnd - selStart;
+    let bytes;
+    if (fmtSelect.value === 'aac') {
+      const bitrate = parseInt(bitrateSelect.value, 10);
+      bytes = (bitrate / 8) * dur;
+    } else {
+      bytes = audioBuffer.sampleRate * audioBuffer.numberOfChannels * 2 * dur;
+    }
+    const mb = bytes / 1_000_000; // decimal MB (not MiB)
+    // 2 significant figures
+    const formatted = mb < 0.01  ? '< 0.01 MB'
+                    : mb < 10    ? mb.toPrecision(2) + ' MB'
+                    :              mb.toPrecision(2) + ' MB';
+    estSizeEl.textContent = '≈ ' + formatted;
+  }
+
+  // ── Check which AAC bitrates are supported on this device ────────────────────
+  // Runs after file load (so we know sampleRate + numberOfChannels).
+  // Disables options the browser/device rejects, adds "(unsupported)" label.
+  async function checkBitrateSupport() {
+    const sr  = audioBuffer.sampleRate;
+    const nCh = audioBuffer.numberOfChannels;
+    for (const opt of bitrateSelect.options) {
+      const bitrate = parseInt(opt.value, 10);
+      try {
+        const { supported } = await AudioEncoder.isConfigSupported(
+          { codec: 'mp4a.40.2', sampleRate: sr, numberOfChannels: nCh, bitrate }
+        );
+        opt.disabled    = !supported;
+        opt.textContent = opt.textContent.replace(' (unsupported)', '') +
+                          (supported ? '' : ' (unsupported)');
+      } catch (_) {
+        opt.disabled    = true;
+        opt.textContent = opt.textContent.replace(' (unsupported)', '') + ' (unsupported)';
+      }
+    }
+    // If currently selected option got disabled, pick the first supported one
+    if (bitrateSelect.selectedOptions[0]?.disabled) {
+      const first = Array.from(bitrateSelect.options).find(o => !o.disabled);
+      if (first) first.selected = true;
+    }
+  }
+
+  // ── Fade helper ───────────────────────────────────────────────────────────────
+  // Applies a linear fade-in and/or fade-out in-place on a Float32Array slice.
+  // fadeInSamples / fadeOutSamples are clamped to half the buffer length so
+  // they never overlap even on very short selections.
+  function applyFade(data, length, fadeInSamples, fadeOutSamples) {
+    const half = Math.floor(length / 2);
+    const fi   = Math.min(fadeInSamples,  half);
+    const fo   = Math.min(fadeOutSamples, half);
+    for (let i = 0; i < fi; i++)          data[i] *= i / fi;
+    for (let i = 0; i < fo; i++)          data[length - 1 - i] *= i / fo;
+  }
+
+  // Build a faded AudioBuffer from the current selection + fade settings.
+  // Returns a new AudioBuffer (does not modify the original).
+  function buildFadedBuffer() {
+    const sr          = audioBuffer.sampleRate;
+    const nCh         = audioBuffer.numberOfChannels;
+    const startSample = Math.floor(selStart * sr);
+    const endSample   = Math.floor(selEnd   * sr);
+    const length      = endSample - startSample;
+    const fadeIn      = Math.round((parseFloat(fadeInEl.value)  || 0) * sr);
+    const fadeOut     = Math.round((parseFloat(fadeOutEl.value) || 0) * sr);
+
+    const ac  = getAC();
+    const out = ac.createBuffer(nCh, length, sr);
+    for (let c = 0; c < nCh; c++) {
+      const src  = audioBuffer.getChannelData(c).slice(startSample, endSample);
+      applyFade(src, length, fadeIn, fadeOut);
+      out.copyToChannel(src, c);
+    }
+    return out;
+  }
+
+  // ── Preview ───────────────────────────────────────────────────────────────────
+  playBtn.addEventListener('click', () => {
+    if (!audioBuffer) return;
+    if (previewSrc) {
+      try { previewSrc.stop(); } catch (_) {}
+      previewSrc = null;
+      playBtn.textContent = '▶ Preview';
+      return;
+    }
+    if (selEnd <= selStart) { setStatus('Select a region first'); return; }
+    const ac     = getAC();
+    const faded  = buildFadedBuffer();
+    const src    = ac.createBufferSource();
+    src.buffer   = faded;
+    src.connect(ac.destination);
+    src.start(0);
+    previewSrc = src;
+    playBtn.textContent = '■ Stop';
+    src.onended = () => { playBtn.textContent = '▶ Preview'; previewSrc = null; };
+    setStatus('Playing preview…');
+  });
+
+  // ── Extract ───────────────────────────────────────────────────────────────────
+  extractBtn.addEventListener('click', async () => {
+    if (!audioBuffer || selEnd <= selStart) return;
+
+    // Read format from the <select> — simple, reliable, no event-delegation issues
+    const fmt = fmtSelect.value;
+
+    extractBtn.disabled = true;
+    downloadLink.style.display = 'none';
+    setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
+
+    try {
+      const faded  = buildFadedBuffer();
+      let blob, filename;
+      const ts = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
+
+      if (fmt === 'aac') {
+        blob     = await extractAAC(faded, 0, faded.duration);
+        filename = 'extract_' + ts + '.aac';
+      } else {
+        blob     = extractWAV(faded, 0, faded.duration);
+        filename = 'extract_' + ts + '.wav';
+      }
+
+      const url = URL.createObjectURL(blob);
+      downloadLink.href     = url;
+      downloadLink.download = filename;
+      downloadLink.style.display = 'inline-block';
+      dlFilename.textContent = 'Save ' + filename;
+      setStatus((selEnd - selStart).toFixed(2) + 's extracted as ' + fmt.toUpperCase(), 'ok');
+
+    } catch (err) {
+      setStatus('Error: ' + (err.message || String(err)), 'error');
+    }
+
+    extractBtn.disabled = false;
+  });
+
+  // ── AAC encoder (WebCodecs AudioEncoder, Chromium 94+) ───────────────────────
+  async function extractAAC(buffer, startSec, endSec) {
+    if (typeof AudioEncoder === 'undefined') {
+      throw new Error('AudioEncoder API not available in this browser. Please switch to WAV.');
+    }
+
+    const sr          = buffer.sampleRate;
+    const nCh         = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sr);
+    const endSample   = Math.floor(endSec   * sr);
+    const length      = endSample - startSample;
+
+    if (length <= 0) throw new Error('Selection is empty.');
+
+    const bitrate = parseInt(bitrateSelect.value, 10);
+    const config  = { codec: 'mp4a.40.2', sampleRate: sr, numberOfChannels: nCh, bitrate };
+
+    const support = await AudioEncoder.isConfigSupported(config);
+    if (!support.supported) {
+      throw new Error('AAC (mp4a.40.2) not supported in this browser. Please switch to WAV.');
+    }
+
+    // Safe channel slicing: .slice() copies the data so we own it cleanly.
+    // Avoid Float32Array(ch.buffer, byteOffset, length) — ch.byteOffset may
+    // be non-zero, making the byte arithmetic wrong and feeding garbage to the encoder.
+    const channelData = [];
+    for (let c = 0; c < nCh; c++) {
+      channelData.push(buffer.getChannelData(c).slice(startSample, endSample));
+    }
+
+    const chunks = [];
+
+    await new Promise((resolve, reject) => {
+      let encoder = null;
+
+      try {
+        encoder = new AudioEncoder({
+          output: chunk => chunks.push(chunk),
+          error:  err  => {
+            try { encoder.close(); } catch (_) {}
+            reject(new Error('AudioEncoder error: ' + err.message));
+          },
+        });
+
+        encoder.configure(config);
+
+        // AAC-LC uses 1024-sample frames. Always allocate a full FRAME-sized
+        // buffer; the last (possibly shorter) frame gets zero-padded automatically
+        // because Float32Array is zero-initialised.
+        const FRAME = 1024;
+        let   ts    = 0; // timestamp in samples; converted to µs below
+
+        for (let offset = 0; offset < length; offset += FRAME) {
+          const frameLen    = Math.min(FRAME, length - offset);
+          const interleaved = new Float32Array(FRAME * nCh); // zero-padded
+
+          for (let i = 0; i < frameLen; i++) {
+            for (let c = 0; c < nCh; c++) {
+              interleaved[i * nCh + c] = channelData[c][offset + i];
+            }
+          }
+
+          const ad = new AudioData({
+            format:           'f32',        // interleaved float32 — correct WebCodecs enum value
+            sampleRate:       sr,
+            numberOfFrames:   FRAME,        // always 1024; last frame is zero-padded
+            numberOfChannels: nCh,
+            timestamp:        Math.round(ts * 1_000_000 / sr),
+            data:             interleaved,
+          });
+
+          encoder.encode(ad);
+          ad.close();
+          ts += frameLen; // advance by real samples, not padded size
+        }
+
+        encoder.flush()
+          .then(() => { encoder.close(); resolve(); })
+          .catch(err => { try { encoder.close(); } catch (_) {} reject(err); });
+
+      } catch (err) {
+        if (encoder) try { encoder.close(); } catch (_) {}
+        reject(err);
+      }
+    });
+
+    if (chunks.length === 0) throw new Error('Encoder produced no output. Try WAV instead.');
+
+    return new Blob([buildADTS(chunks, sr, nCh)], { type: 'audio/aac' });
+  }
+
+  // Wrap raw AAC frames in ADTS headers so the file is self-contained
+  function buildADTS(chunks, sampleRate, nChannels) {
+    const FREQ_TABLE = [96000, 88200, 64000, 48000, 44100, 32000,
+                        24000, 22050, 16000, 12000, 11025,  8000, 7350];
+    let fi = FREQ_TABLE.indexOf(sampleRate);
+    if (fi < 0) fi = 4; // default to 44100 index if not found
+
+    const raw   = chunks.map(chunk => {
+      const d = new Uint8Array(chunk.byteLength);
+      chunk.copyTo(d);
+      return d;
+    });
+    const total = raw.reduce((sum, d) => sum + 7 + d.length, 0);
+    const out   = new Uint8Array(total);
+    let   pos   = 0;
+
+    for (const d of raw) {
+      const fl = 7 + d.length; // total frame length incl. header
+      // ADTS fixed header
+      out[pos    ] = 0xFF;
+      out[pos + 1] = 0xF1;                               // MPEG-4, no CRC
+      out[pos + 2] = (1 << 6) | (fi << 2) | (nChannels >> 2); // AAC-LC, freq, ch[2]
+      out[pos + 3] = ((nChannels & 3) << 6) | ((fl >> 11) & 0x03);
+      out[pos + 4] = (fl >> 3) & 0xFF;
+      out[pos + 5] = ((fl & 7) << 5) | 0x1F;            // VBR fullness
+      out[pos + 6] = 0xFC;
+      out.set(d, pos + 7);
+      pos += fl;
+    }
+    return out.buffer;
+  }
+
+  // ── WAV encoder (pure JS) ─────────────────────────────────────────────────────
+  function extractWAV(buffer, startSec, endSec) {
+    const sr          = buffer.sampleRate;
+    const nCh         = buffer.numberOfChannels;
+    const startSample = Math.floor(startSec * sr);
+    const endSample   = Math.floor(endSec   * sr);
+    const length      = endSample - startSample;
+
+    if (length <= 0) throw new Error('Selection is empty.');
+
+    const dataLen = length * nCh * 2; // 16-bit samples
+    const ab      = new ArrayBuffer(44 + dataLen);
+    const v       = new DataView(ab);
+
+    const ws = (off, str) => {
+      for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i));
+    };
+
+    ws(0, 'RIFF'); v.setUint32(4,  36 + dataLen,     true);
+    ws(8, 'WAVE');
+    ws(12, 'fmt '); v.setUint32(16, 16,              true);
+    v.setUint16(20, 1,             true); // PCM
+    v.setUint16(22, nCh,           true);
+    v.setUint32(24, sr,            true);
+    v.setUint32(28, sr * nCh * 2,  true); // byte rate
+    v.setUint16(32, nCh * 2,       true); // block align
+    v.setUint16(34, 16,            true); // bits per sample
+    ws(36, 'data'); v.setUint32(40, dataLen,          true);
+
+    let off = 44;
+    for (let i = 0; i < length; i++) {
+      for (let c = 0; c < nCh; c++) {
+        const s = Math.max(-1, Math.min(1, buffer.getChannelData(c)[startSample + i]));
+        v.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+        off += 2;
+      }
+    }
+
+    return new Blob([ab], { type: 'audio/wav' });
+  }
+
+})();
+</script>
+</body>
+</html>
