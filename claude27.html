@@ -87,6 +87,12 @@
       white-space: nowrap;
       max-width: 100%;
     }
+    .dz-duration {
+      display: block;
+      font-size: 13px;
+      color: #999;
+      margin-top: 2px;
+    }
     .drop-zone.loading { border-color: #8ab4f8; color: #8ab4f8; cursor: default; }
 
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -222,7 +228,12 @@
       font-size: 15px;
       color: #d4d4d4;
     }
-    #lossless-badge {
+    .time-unit-note {
+      font-size: 13px;
+      color: #666;
+      margin-top: 6px;
+    }
+    #length-display { color: #999; cursor: default; }
       font-size: 13px;
       color: #86efac;
       white-space: nowrap;
@@ -250,6 +261,14 @@
       transition: border-color 0.15s;
     }
     .fade-row input[type="number"]:focus { border-color: #8ab4f8; }
+
+    #editor-section {
+      flex-wrap: wrap;
+      gap: 20px;
+      justify-content: center;
+    }
+    .time-unit-note { font-size: 13px; color: #666; margin-top: 6px; }
+    #length-display { font-size: 16px; color: #999; display: block; padding: 9px 0; }
 
     /* ── Action buttons ────────────────────────────────────────────────────────── */
     .btn-row { display: flex; gap: 10px; margin-top: 1.5rem; align-items: center; flex-wrap: wrap; }
@@ -327,10 +346,10 @@
   <!-- File input lives outside drop zone so replacing dropZone.innerHTML never detaches it -->
   <input type="file" id="file-input" accept="audio/*" style="display:none">
   <div class="section">
-    <div class="label">Source file</div>
     <div class="drop-zone" id="drop-zone" tabindex="0" role="button"
          aria-label="Upload audio file. Click or drop a file here.">
       <span class="dz-icon" aria-hidden="true">♪</span>
+      <strong class="label" style="display:block;margin-bottom:4px">Source file</strong>
       Drop an audio file here, or click to browse
     </div>
   </div>
@@ -343,7 +362,7 @@
 
     <!-- Waveform -->
     <div class="section">
-      <div class="label">Waveform — tap S/E markers to move · scroll or pinch to zoom</div>
+      <div class="label">Waveform</div>
       <canvas id="waveform" width="680" height="100"
               tabindex="0" role="img" aria-label="Audio waveform"></canvas>
 
@@ -370,16 +389,21 @@
       <div class="status" id="status" role="status" aria-live="polite"></div>
       <div class="time-row">
         <div class="time-field">
-          <label>Start (seconds)
+          <label>Start
             <input type="number" id="start-input" min="0" step="0.01" value="0">
           </label>
         </div>
         <div class="time-field">
-          <label>End (seconds)
+          <label>End
             <input type="number" id="end-input" min="0" step="0.01" value="0">
           </label>
         </div>
+        <div class="time-field">
+          <label>Length</label>
+          <span id="length-display"></span>
+        </div>
       </div>
+      <div class="time-unit-note">All values in seconds</div>
     </div>
 
     <!-- Format -->
@@ -445,6 +469,7 @@
   const ctx2d         = canvas.getContext('2d');
   const startInput    = document.getElementById('start-input');
   const endInput      = document.getElementById('end-input');
+  const lengthDisplay = document.getElementById('length-display');
   const fmtSelect     = document.getElementById('fmt-select');
   const bitrateSelect = document.getElementById('bitrate-select');
   const bitrateLabel  = document.getElementById('bitrate-label');
@@ -847,11 +872,13 @@
         loadStatusEl.textContent = '';
         dropZone.classList.remove('loading');
         dropZone.classList.add('loaded');
-        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>' +
-          '<span class="dz-filename">' + escapeHtml(file.name) + '</span>';
+        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>'
+          + '<strong class="label" style="display:block;margin-bottom:2px">Source file</strong>'
+          + '<span class="dz-filename">' + escapeHtml(file.name) + '</span>'
+          + '<span class="dz-duration">' + audioBuffer.duration.toFixed(2) + ' s</span>';
         applyZoom(1, 0);
         updateInputs();
-        setStatus('Drag the S and E markers on the waveform, or type times below');
+        setStatus('Drag the markers on the waveform, or type times below');
         if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
       } catch (err) {
         audioBuffer = null;
@@ -879,8 +906,9 @@
 
   // ── Time inputs ───────────────────────────────────────────────────────────────
   function updateInputs() {
-    startInput.value = selStart.toFixed(2);
-    endInput.value   = selEnd.toFixed(2);
+    startInput.value    = selStart.toFixed(2);
+    endInput.value      = selEnd.toFixed(2);
+    lengthDisplay.textContent = (selEnd - selStart).toFixed(2);
     updateExtractBtn();
     updateEstSize();
   }
@@ -1042,7 +1070,9 @@
     downloadLink.style.display = 'none';
 
     try {
-      const ts = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
+      // Base name without extension, e.g. "my_recording"
+      const baseName = sourceFile ? sourceFile.name.replace(/\.[^.]+$/, '') : 'audio';
+      const ts       = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
       let blob, filename;
 
       // ── Try lossless remux first (only when no fade is applied) ──────────────
@@ -1051,9 +1081,8 @@
 
       if (remuxed) {
         blob     = remuxed.blob;
-        filename = 'extract_' + ts + '.' + remuxed.ext;
-        setStatus((selEnd - selStart).toFixed(2) + 's remuxed losslessly as '
-                  + remuxed.ext.toUpperCase(), 'ok');
+        filename = baseName + '_' + ts + '.' + remuxed.ext;
+        setStatus((selEnd - selStart).toFixed(2) + 's — lossless copy', 'ok');
       } else {
         // ── Fall back to decode → reencode ────────────────────────────────────
         setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
@@ -1061,13 +1090,12 @@
 
         if (fmt === 'aac') {
           blob     = await extractAAC(faded, 0, faded.duration);
-          filename = 'extract_' + ts + '.aac';
+          filename = baseName + '_' + ts + '.aac';
         } else {
           blob     = extractWAV(faded, 0, faded.duration);
-          filename = 'extract_' + ts + '.wav';
+          filename = baseName + '_' + ts + '.wav';
         }
-        setStatus((selEnd - selStart).toFixed(2) + 's extracted as '
-                  + fmt.toUpperCase(), 'ok');
+        setStatus((selEnd - selStart).toFixed(2) + 's as ' + fmt.toUpperCase(), 'ok');
       }
 
       const url = URL.createObjectURL(blob);
