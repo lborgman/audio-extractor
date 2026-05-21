@@ -1,0 +1,375 @@
+/* ── Reset & Design System Tokens ─────────────────────────────────────────── */
+*, *::before, *::after { 
+  box-sizing: border-box; 
+  margin: 0; 
+  padding: 0; 
+}
+
+:root {
+  /* Dark mode palette depth */
+  --bg-main: #0a0a0c;        /* Deep canvas background */
+  --bg-main: red ;        /* Deep canvas background */
+  --bg-card: #141417;        /* Container cards */
+  --bg-card: green;        /* Container cards */
+  --bg-input: #1d1d22;       /* Form field interiors */
+  --border-color: #2e2e38;   /* Subtle structural borders */
+  --border-hover: #444453;   /* Interactive border states */
+  
+  /* Typography colors */
+  --text-main: #e4e4e7;      /* Primary high-contrast readability text */
+  --text-muted: #a1a1aa;     /* Secondary details, descriptions, and labels */
+  --text-dark: #0a0a0c;      /* Contrast text for bright elements */
+  
+  /* Semantic accents */
+  --accent: #3b82f6;         /* Modern audio blue for primary actions */
+  --accent-hover: #60a5fa;   /* Hover glow state for blue elements */
+  --success: #10b981;        /* Mint green for loaded states/downloads */
+  --error: #f43f5e;          /* Destructive alert actions */
+  
+  /* Clean font separation */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "SF Mono", SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+}
+
+/* ── Base App Wrapper ─────────────────────────────────────────────────────── */
+body {
+  font-family: var(--font-sans); /* Cleaner layout presentation */
+  font-size: 15px;
+  line-height: 1.6;
+  background: var(--bg-main);
+  color: var(--text-main);
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4rem 1rem;
+  -webkit-font-smoothing: antialiased; /* Crisp text anti-aliasing */
+}
+
+.container { 
+  width: 100%; 
+  max-width: 680px; /* Snugger layout frames the 680px wide canvas perfectly */
+}
+
+/* ── Header Styling ───────────────────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 2.5rem;
+}
+header img { 
+  display: block; 
+  border-radius: 10px; 
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3); /* Subtle depth beneath the icon */
+}
+header h1 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-transform: none; /* Softened away from harsh uppercase */
+  color: var(--text-main);
+}
+header .credit {
+  font-size: 12px;
+  color: #555562;
+  margin-top: 2px;
+}
+
+/* ── Card Containers ──────────────────────────────────────────────────────── */
+.section { 
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  margin-bottom: 1.25rem; 
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* Redundant with card architecture; hidden to keep presentation clean */
+.divider { display: none; } 
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+}
+
+/* ── Drop Zone States ─────────────────────────────────────────────────────── */
+.drop-zone {
+  border: 2px dashed var(--border-color);
+  border-radius: 10px;
+  padding: 2rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 15px;
+  cursor: pointer;
+  background: rgba(20, 20, 23, 0.4);
+  transition: all 0.2s ease;
+}
+.drop-zone:hover,
+.drop-zone.drag-over { 
+  border-color: var(--accent); 
+  color: var(--text-main); 
+  background: rgba(59, 130, 246, 0.04); 
+}
+.drop-zone:focus-visible { 
+  outline: 2px solid var(--accent); 
+  outline-offset: 2px; 
+}
+.drop-zone .dz-icon { 
+  font-size: 1.75rem; 
+  display: block; 
+  margin-bottom: 6px; 
+  color: var(--accent);
+}
+/* File Loaded state */
+.drop-zone.loaded { 
+  color: var(--text-main); 
+  border-style: solid;
+  border-color: rgba(16, 185, 129, 0.3); 
+  background: rgba(16, 185, 129, 0.02);
+}
+.drop-zone.loaded .dz-icon {
+  color: var(--success);
+}
+.dz-filename {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  font-family: var(--font-mono); /* Technical readouts look clean in mono */
+  font-size: 14px;
+}
+
+/* ── Context & Info Statuses ──────────────────────────────────────────────── */
+.status {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-top: -0.25rem;
+  margin-bottom: 1.25rem;
+  padding-left: 4px;
+}
+.status.error { color: var(--error); }
+.status.ok    { color: var(--success); }
+
+/* ── Waveform Canvas ───────────────────────────────────────────────────── */
+canvas#waveform {
+  width: 100%;
+  height: 100px;
+  display: block;
+  border-radius: 8px;
+  background: #0d0d11; /* Slightly darker viewport backdrop */
+  border: 1px solid rgba(255,255,255,0.03);
+  touch-action: none;
+}
+canvas#waveform:focus-visible { outline: 2px solid var(--accent); }
+
+/* ── Sliders & Controls ────────────────────────────────────────────────── */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 14px;
+}
+.slider-row-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  white-space: nowrap;
+  width: 45px;
+}
+.slider-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  width: 36px;
+  text-align: right;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 5px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 99px;
+  outline: none;
+}
+/* Interactive Range Thumb (Webkit) */
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px; height: 14px;
+  background: var(--text-main);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 0.1s, background-color 0.1s;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  background: var(--accent-hover);
+}
+/* Interactive Range Thumb (Firefox) */
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px;
+  background: var(--text-main);
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.1s, background-color 0.1s;
+}
+input[type="range"]::-moz-range-thumb:hover {
+  transform: scale(1.15);
+  background: var(--accent-hover);
+}
+#pan-row.inert-pan { opacity: 0.25; pointer-events: none; }
+
+/* ── Audio Stats Footer ──────────────────────────────────────────────────── */
+.info-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* ── Form Fields & Inputs ────────────────────────────────────────────────── */
+.time-row { display: flex; gap: 1rem; }
+.time-field { flex: 1; }
+.time-field label {
+  font-size: 13px;
+  color: var(--text-muted);
+  display: block;
+  margin-bottom: 6px;
+}
+
+input[type="number"], select {
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+/* Focus rings with slight ambient background spread */
+input[type="number"]:focus, select:focus { 
+  border-color: var(--accent); 
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+/* Inline setting clusters (Format & Fades) */
+.fmt-row, .fade-row { 
+  display: flex; 
+  align-items: center; 
+  gap: 16px; 
+  flex-wrap: wrap; 
+}
+.fmt-row label, .fade-row label { 
+  font-size: 13px; 
+  color: var(--text-muted); 
+  white-space: nowrap; 
+}
+.fmt-row select { width: auto; min-width: 90px; }
+.fade-row input[type="number"] { width: 90px; }
+
+#lossless-badge {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--success);
+  background: rgba(16, 185, 129, 0.1);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+#est-size {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-left: auto; /* Pushes size calculation neatly to the right edge */
+}
+
+/* ── Interactive Buttons & Actions ────────────────────────────────────────── */
+.btn-row { 
+  display: flex; 
+  gap: 12px; 
+  margin-top: 1.75rem; 
+  align-items: center; 
+  flex-wrap: wrap; 
+}
+
+button {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 11px 20px;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Secondary Actions */
+#play-btn {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-main);
+}
+#play-btn:hover { 
+  border-color: var(--border-hover); 
+  background: rgba(255,255,255,0.02); 
+}
+
+/* Primary Hero Extraction Trigger */
+#extract-btn {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #ffffff;
+}
+#extract-btn:hover:not(:disabled) { 
+  background: var(--accent-hover); 
+  border-color: var(--accent-hover);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.25); /* Fluid glowing effect */
+}
+#extract-btn:disabled { 
+  background: #222227; 
+  border-color: #222227; 
+  color: #555562; 
+  cursor: not-allowed; 
+  box-shadow: none;
+}
+
+/* Download Link styling */
+#download-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 1rem;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--success);
+  text-decoration: none;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.04);
+  border-radius: 8px;
+  padding: 10px 18px;
+  transition: all 0.15s ease;
+}
+#download-link:hover { 
+  background: rgba(16, 185, 129, 0.08);
+  border-color: var(--success); 
+}
