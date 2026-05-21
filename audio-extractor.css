@@ -8,6 +8,7 @@
 }
 
 :root {
+  font-size: 16px;
   /* Dark mode palette depth */
   --bg-main: #0a0a0c;
   /* Deep canvas background */
@@ -47,7 +48,7 @@
 body {
   font-family: var(--font-sans);
   /* Cleaner layout presentation */
-  font-size: 15px;
+  /* font-size: 15px; */
   line-height: 1.6;
   background: var(--bg-main);
   color: var(--text-main);
@@ -82,7 +83,8 @@ header img {
 }
 
 header h1 {
-  font-size: 18px;
+  /* font-size: 18px; */
+  font-size: 1.4rem;
   font-weight: 600;
   letter-spacing: -0.01em;
   text-transform: none;
@@ -91,7 +93,8 @@ header h1 {
 }
 
 header .credit {
-  font-size: 12px;
+  /* font-size: 12px; */
+  font-size: 0.9rem;
   color: #555562;
   margin-top: 2px;
 }
@@ -129,7 +132,7 @@ header .credit {
 }
 
 .label {
-  font-size: 12px;
+  /* font-size: 12px; */
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -144,7 +147,8 @@ header .credit {
   padding: 2rem;
   text-align: center;
   color: var(--text-muted);
-  font-size: 15px;
+  /* font-size: 15px; */
+  font-size: 1rem;
   cursor: pointer;
   background: rgba(20, 20, 23, 0.4);
   transition: all 0.2s ease;
@@ -194,7 +198,8 @@ header .credit {
 
 /* ── Context & Info Statuses ──────────────────────────────────────────────── */
 .status {
-  font-size: 14px;
+  /* font-size: 14px; */
+  font-size: 1rem;
   color: var(--text-muted);
   margin-top: -0.25rem;
   margin-bottom: 1.25rem;
@@ -234,7 +239,8 @@ canvas#waveform:focus-visible {
 }
 
 .slider-row-label {
-  font-size: 13px;
+  /* font-size: 13px; */
+  font-size: 1rem;
   font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
@@ -243,7 +249,8 @@ canvas#waveform:focus-visible {
 
 .slider-val {
   font-family: var(--font-mono);
-  font-size: 13px;
+  /* font-size: 13px; */
+  font-size: 1rem;
   color: var(--text-muted);
   width: 36px;
   text-align: right;
@@ -306,7 +313,8 @@ input[type="range"]::-moz-range-thumb:hover {
   padding-top: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.04);
   font-family: var(--font-mono);
-  font-size: 13px;
+  /* font-size: 13px; */
+  font-size: 1rem;
   color: var(--text-muted);
 }
 
@@ -321,7 +329,8 @@ input[type="range"]::-moz-range-thumb:hover {
 }
 
 .time-field label {
-  font-size: 13px;
+  /* font-size: 13px; */
+  font-size: 1rem;
   color: var(--text-muted);
   display: block;
   margin-bottom: 6px;
@@ -335,7 +344,8 @@ select {
   border-radius: 8px;
   color: var(--text-main);
   font-family: var(--font-mono);
-  font-size: 14px;
+  /* font-size: 14px; */
+  font-size: 1rem;
   padding: 10px 14px;
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
@@ -359,7 +369,8 @@ select:focus {
 
 .fmt-row label,
 .fade-row label {
-  font-size: 13px;
+  /* font-size: 13px; */
+  font-size: 1rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -374,7 +385,8 @@ select:focus {
 }
 
 #lossless-badge {
-  font-size: 12px;
+  /* font-size: 12px; */
+  font-size: 1rem;
   font-weight: 500;
   color: var(--success);
   background: rgba(16, 185, 129, 0.1);
@@ -384,7 +396,8 @@ select:focus {
 
 #est-size {
   font-family: var(--font-mono);
-  font-size: 13px;
+  /* font-size: 13px; */
+  font-size: 1rem;
   color: var(--text-muted);
   margin-left: auto;
   /* Pushes size calculation neatly to the right edge */
@@ -401,7 +414,8 @@ select:focus {
 
 button {
   font-family: var(--font-sans);
-  font-size: 14px;
+  /* font-size: 14px; */
+  font-size: 1rem;
   font-weight: 600;
   cursor: pointer;
   border-radius: 8px;
@@ -457,7 +471,8 @@ button:focus-visible {
   align-items: center;
   gap: 6px;
   margin-top: 1rem;
-  font-size: 14px;
+  /* font-size: 14px; */
+  font-size: 1rem;
   font-weight: 500;
   color: var(--success);
   text-decoration: none;
@@ -483,4 +498,12 @@ div.info-bar {
 
 #sel-label {
   display: none;
+}
+
+.time-unit-note {
+  font-size: 1rem;
+}
+
+.label {
+  font-size: 1.15rem;
 }
