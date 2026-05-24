@@ -354,13 +354,13 @@
 
   <!-- ── File drop ── -->
   <!-- File input lives outside drop zone so replacing dropZone.innerHTML never detaches it -->
-  <input type="file" id="file-input" accept="audio/*" style="display:none">
+  <input type="file" id="file-input" accept="audio/*,video/*" style="display:none">
   <div class="section">
     <div class="drop-zone" id="drop-zone" tabindex="0" role="button"
-         aria-label="Upload audio file. Click or drop a file here.">
+         aria-label="Upload audio or video file. Click or drop a file here.">
       <span class="dz-icon" aria-hidden="true">♪</span>
       <strong class="label" style="display:block;margin-bottom:4px">Source file</strong>
-      Drop an audio file here, or click to browse
+      Drop an audio or video file here, or click to browse
     </div>
   </div>
 
@@ -848,7 +848,10 @@
       const u8   = new Uint8Array(header);
       const view = new DataView(header);
       sourceFormat = detectContainerFormat(view, u8);
-      const labels = { wav: 'WAV', adts: 'AAC', mp4: 'M4A / MP4', flac: 'FLAC' };
+      const labels = {
+        wav: 'WAV', adts: 'AAC', mp4: 'MP4 / M4A / MOV',
+        flac: 'FLAC', webm: 'WebM', ogg: 'OGG', avi: 'AVI'
+      };
       inputFmtEl.textContent = labels[sourceFormat] || file.name.split('.').pop().toUpperCase() || '—';
       updateLosslessBadge();
     }).catch(() => {});
@@ -869,46 +872,45 @@
       try {
         loadStatusEl.textContent = 'Decoding audio…';
         loadStatusEl.className   = 'status';
-        const ac = getAC();
-        audioBuffer = await ac.decodeAudioData(evt.target.result);
-
-        loadStatusEl.textContent = 'Building waveform…';
-        await new Promise(r => setTimeout(r, 0));
-        waveformDirty = true;
-        buildWaveformCache();
-
-        selStart = 0;
-        selEnd   = audioBuffer.duration;
-        editorSection.style.display = 'flex';
-        loadStatusEl.textContent = '';
-        dropZone.classList.remove('loading');
-        dropZone.classList.add('loaded');
-        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>'
-          + '<strong class="label" style="display:block;margin-bottom:2px">Source file</strong>'
-          + '<span class="dz-filename">' + escapeHtml(file.name) + '</span>'
-          + '<span class="dz-duration">' + audioBuffer.duration.toFixed(2) + ' s</span>';
-        applyZoom(1, 0);
-        updateInputs();
-        setStatus('Drag the markers on the waveform, or type times below');
-        if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
+        audioBuffer = await getAC().decodeAudioData(evt.target.result);
+        await finishLoad(file);
       } catch (err) {
-        audioBuffer = null;
-        editorSection.style.display = 'none';
-        dropZone.classList.remove('loading');
-        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
-          'Drop an audio file here, or click to browse';
-        loadStatusEl.textContent = 'Could not decode: ' + err.message;
-        loadStatusEl.className   = 'status error';
+        showLoadError('Could not decode: ' + err.message);
       }
     };
-    reader.onerror = () => {
-      dropZone.classList.remove('loading');
-      dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
-        'Drop an audio file here, or click to browse';
-      loadStatusEl.textContent = 'Could not read file.';
-      loadStatusEl.className   = 'status error';
-    };
+    reader.onerror = () => showLoadError('Could not read file.');
     reader.readAsArrayBuffer(file);
+  }
+
+  function showLoadError(msg) {
+    audioBuffer = null;
+    editorSection.style.display = 'none';
+    dropZone.classList.remove('loading');
+    dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
+      'Drop an audio or video file here, or click to browse';
+    loadStatusEl.textContent = msg;
+    loadStatusEl.className   = 'status error';
+  }
+
+  async function finishLoad(file) {
+    loadStatusEl.textContent = 'Building waveform…';
+    await new Promise(r => setTimeout(r, 0));
+    waveformDirty = true;
+    buildWaveformCache();
+    selStart = 0;
+    selEnd   = audioBuffer.duration;
+    editorSection.style.display = 'flex';
+    loadStatusEl.textContent = '';
+    dropZone.classList.remove('loading');
+    dropZone.classList.add('loaded');
+    dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>'
+      + '<strong class="label" style="display:block;margin-bottom:2px">Source file</strong>'
+      + '<span class="dz-filename">' + escapeHtml(file.name) + '</span>'
+      + '<span class="dz-duration">' + audioBuffer.duration.toFixed(2) + ' s</span>';
+    applyZoom(1, 0);
+    updateInputs();
+    setStatus('Drag the markers on the waveform, or type times below');
+    if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
   }
 
   function escapeHtml(s) {
@@ -1112,6 +1114,9 @@
       const ts       = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
       let blob, filename;
 
+      const fadeIn  = parseFloat(fadeInEl.value)  || 0;
+      const fadeOut = parseFloat(fadeOutEl.value) || 0;
+
       setStatus(hasFade ? '' : 'Checking for lossless copy…');
       const remuxed = hasFade ? null : await tryRemux(sourceFile, fmt, selStart, selEnd);
 
@@ -1199,7 +1204,15 @@
     const id = (o) => String.fromCharCode(u8[o], u8[o+1], u8[o+2], u8[o+3]);
     if (id(0) === 'RIFF' && id(8) === 'WAVE')  return 'wav';
     if (id(0) === 'fLaC')                       return 'flac';
+    // MP4 / M4A / M4V / MOV all use 'ftyp' box at offset 4
     if (id(4) === 'ftyp')                       return 'mp4';
+    // WebM / MKV: EBML magic
+    if (u8[0] === 0x1A && u8[1] === 0x45 && u8[2] === 0xDF && u8[3] === 0xA3) return 'webm';
+    // OGG
+    if (id(0) === 'OggS')                       return 'ogg';
+    // AVI
+    if (id(0) === 'RIFF' && id(8) === 'AVI ')   return 'avi';
+    // ADTS AAC
     if (u8[0] === 0xFF && (u8[1] & 0xF0) === 0xF0 &&
         (u8[1] & 0x06) === 0x00)                return 'adts';
     return null;

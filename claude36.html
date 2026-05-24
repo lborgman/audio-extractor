@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Audio Extractor</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <script>
+    // Register service worker that adds COOP/COEP headers needed by ffmpeg.wasm.
+    // The page reloads once after the SW activates — subsequent loads are isolated.
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./coi-serviceworker.js').then(reg => {
+        if (!crossOriginIsolated) {
+          // SW just installed — reload so the headers take effect
+          reg.addEventListener('updatefound', () => location.reload());
+          if (reg.installing) location.reload();
+        }
+      });
+    }
+  </script>
   <style>
     /* ── Reset ─────────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -130,13 +143,6 @@
       color: #999;
       white-space: nowrap;
       width: 40px;
-    }
-    .slider-val {
-      font-size: 14px;
-      color: #999;
-      width: 36px;
-      text-align: right;
-      flex-shrink: 0;
     }
     input[type="range"] {
       -webkit-appearance: none;
@@ -314,19 +320,36 @@
     /* ── Download link ─────────────────────────────────────────────────────────── */
     #download-link {
       display: none;
-      margin-top: 1rem;
+      font-family: 'Courier New', Courier, monospace;
       font-size: 15px;
-      color: #8ab4f8; /* 5.2:1 on #0f0f0f ✓ */
-      text-decoration: underline;
-      text-underline-offset: 3px;
-      border: 1px solid #3a3a3a;
+      letter-spacing: 0.05em;
+      cursor: pointer;
       border-radius: 6px;
       padding: 9px 18px;
-      letter-spacing: 0.04em;
-      transition: border-color 0.15s, color 0.15s;
+      line-height: 1.6;
+      text-decoration: none;
+      background: #d4d4d4;
+      border: 1px solid #d4d4d4;
+      color: #0f0f0f;
+      font-weight: bold;
+      transition: background 0.15s, border-color 0.15s;
     }
-    #download-link:hover { border-color: #8ab4f8; color: #aecbfa; }
+    #download-link:hover  { background: #ffffff; border-color: #ffffff; }
+    #download-link.active { display: inline-block; }
+    #download-link[disabled], #download-link.disabled {
+      background: #2a2a2a; border-color: #2a2a2a; color: #555; cursor: not-allowed;
+    }
     #download-link:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
+    #dl-filename {
+      display: block;
+      font-size: 13px;
+      font-weight: normal;
+      color: #444;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
   </style>
   <link rel="stylesheet" href="audio-extractor.css">
 </head>
@@ -344,13 +367,13 @@
 
   <!-- ── File drop ── -->
   <!-- File input lives outside drop zone so replacing dropZone.innerHTML never detaches it -->
-  <input type="file" id="file-input" accept="audio/*" style="display:none">
+  <input type="file" id="file-input" accept="audio/*,video/*" style="display:none">
   <div class="section">
     <div class="drop-zone" id="drop-zone" tabindex="0" role="button"
-         aria-label="Upload audio file. Click or drop a file here.">
+         aria-label="Upload audio or video file. Click or drop a file here.">
       <span class="dz-icon" aria-hidden="true">♪</span>
       <strong class="label" style="display:block;margin-bottom:4px">Source file</strong>
-      Drop an audio file here, or click to browse
+      Drop an audio or video file here, or click to browse
     </div>
   </div>
 
@@ -369,7 +392,6 @@
       <div class="slider-row">
         <label class="slider-row-label" for="zoom-slider">Zoom</label>
         <input type="range" id="zoom-slider" min="1" max="32" step="1" value="1">
-        <span class="slider-val" id="zoom-val" aria-live="polite">1×</span>
       </div>
 
       <div class="slider-row" id="pan-row">
@@ -449,10 +471,11 @@
     <!-- Actions -->
     <div class="btn-row">
       <button id="play-btn" type="button">▶ Preview</button>
-      <button id="extract-btn" type="button" disabled>✂ Extract &amp; download</button>
+      <a id="download-link" role="button" tabindex="0">
+        ✂ ↓ Extract and download to file<br>
+        <span id="dl-filename"></span>
+      </a>
     </div>
-
-    <a id="download-link" href="#" download>↓ <span id="dl-filename">Save file</span></a>
   </div>
 
 </div><!-- /.container -->
@@ -477,17 +500,15 @@
   const losslessBadge = document.getElementById('lossless-badge');
   const inputFmtEl    = document.getElementById('input-fmt');
   const playBtn       = document.getElementById('play-btn');
-  const extractBtn    = document.getElementById('extract-btn');
+  const downloadLink  = document.getElementById('download-link');
+  const dlFilename    = document.getElementById('dl-filename');
   const fadeInEl      = document.getElementById('fade-in');
   const fadeOutEl     = document.getElementById('fade-out');
   const statusEl      = document.getElementById('status');
   const loadStatusEl  = document.getElementById('load-status');
   const durLabel      = document.getElementById('dur-label');
   const selLabel      = document.getElementById('sel-label');
-  const downloadLink  = document.getElementById('download-link');
-  const dlFilename    = document.getElementById('dl-filename');
   const zoomSlider    = document.getElementById('zoom-slider');
-  const zoomValEl     = document.getElementById('zoom-val');
   const panSlider     = document.getElementById('pan-slider');
   const panRow        = document.getElementById('pan-row');
 
@@ -548,8 +569,7 @@
   function applyZoom(newZoom, newVS) {
     zoomLevel = Math.max(1, Math.min(32, newZoom));
     viewStart = clampVS(newVS !== undefined ? newVS : viewStart, zoomLevel);
-    zoomSlider.value      = Math.round(zoomLevel);
-    zoomValEl.textContent = (zoomLevel % 1 === 0 ? zoomLevel : zoomLevel.toFixed(1)) + '×';
+    zoomSlider.value = Math.round(zoomLevel);
     const zoomed = zoomLevel > 1.001;
     panRow.classList.toggle('inert-pan', !zoomed);
     if (zoomed) {
@@ -841,13 +861,24 @@
       const u8   = new Uint8Array(header);
       const view = new DataView(header);
       sourceFormat = detectContainerFormat(view, u8);
-      const labels = { wav: 'WAV', adts: 'AAC', mp4: 'M4A / MP4', flac: 'FLAC' };
+      const labels = {
+        wav: 'WAV', adts: 'AAC', mp4: 'MP4 / M4A / MOV',
+        flac: 'FLAC', webm: 'WebM', ogg: 'OGG', avi: 'AVI'
+      };
       inputFmtEl.textContent = labels[sourceFormat] || file.name.split('.').pop().toUpperCase() || '—';
+      if (isVideoFile(sourceFormat, file.name)) {
+        loadStatusEl.textContent = 'Note: video files require FFmpeg (~10 MB download, cached after first use).';
+        loadStatusEl.className   = 'status';
+      }
       updateLosslessBadge();
     }).catch(() => {});
 
     setStatus('Reading file…');
-    downloadLink.style.display = 'none';
+    downloadLink.classList.remove('active', 'disabled');
+    downloadLink.removeAttribute('href');
+    downloadLink.removeAttribute('download');
+    dlFilename.textContent = '';
+    markExtractDirty();
     dropZone.classList.remove('loaded');
     dropZone.classList.add('loading');
     dropZone.innerHTML = '<div class="spinner" aria-hidden="true"></div>' +
@@ -856,49 +887,224 @@
     const reader = new FileReader();
     reader.onload = async evt => {
       try {
-        loadStatusEl.textContent = 'Decoding audio…';
-        loadStatusEl.className   = 'status';
-        const ac = getAC();
-        audioBuffer = await ac.decodeAudioData(evt.target.result);
-
-        loadStatusEl.textContent = 'Building waveform…';
-        await new Promise(r => setTimeout(r, 0));
-        waveformDirty = true;
-        buildWaveformCache();
-
-        selStart = 0;
-        selEnd   = audioBuffer.duration;
-        editorSection.style.display = 'flex';
-        loadStatusEl.textContent = '';
-        dropZone.classList.remove('loading');
-        dropZone.classList.add('loaded');
-        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>'
-          + '<strong class="label" style="display:block;margin-bottom:2px">Source file</strong>'
-          + '<span class="dz-filename">' + escapeHtml(file.name) + '</span>'
-          + '<span class="dz-duration">' + audioBuffer.duration.toFixed(2) + ' s</span>';
-        applyZoom(1, 0);
-        updateInputs();
-        setStatus('Drag the markers on the waveform, or type times below');
-        if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
+        if (isVideoFile(sourceFormat, file.name)) {
+          await loadFileWithFFmpeg(file);
+        } else {
+          loadStatusEl.textContent = 'Decoding audio…';
+          loadStatusEl.className   = 'status';
+          const ac = getAC();
+          audioBuffer = await ac.decodeAudioData(evt.target.result);
+          await finishLoad(file);
+        }
       } catch (err) {
-        audioBuffer = null;
-        editorSection.style.display = 'none';
-        dropZone.classList.remove('loading');
-        dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
-          'Drop an audio file here, or click to browse';
-        loadStatusEl.textContent = 'Could not decode: ' + err.message;
-        loadStatusEl.className   = 'status error';
+        showLoadError('Could not decode: ' + err.message);
       }
     };
-    reader.onerror = () => {
-      dropZone.classList.remove('loading');
-      dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
-        'Drop an audio file here, or click to browse';
-      loadStatusEl.textContent = 'Could not read file.';
-      loadStatusEl.className   = 'status error';
-    };
+    reader.onerror = () => showLoadError('Could not read file.');
     reader.readAsArrayBuffer(file);
   }
+
+  function isVideoFile(fmt, name) {
+    if (fmt === 'webm' || fmt === 'avi') return true;
+    // For mp4/ftyp, check extension — M4A is audio-only, MP4/MOV/M4V are video
+    if (fmt === 'mp4') {
+      const ext = name.split('.').pop().toLowerCase();
+      return ext === 'mp4' || ext === 'mov' || ext === 'm4v' || ext === 'mkv';
+    }
+    return false;
+  }
+
+  function showLoadError(msg) {
+    audioBuffer = null;
+    editorSection.style.display = 'none';
+    dropZone.classList.remove('loading');
+    dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">♪</span>' +
+      'Drop an audio or video file here, or click to browse';
+    loadStatusEl.textContent = msg;
+    loadStatusEl.className   = 'status error';
+  }
+
+  async function finishLoad(file) {
+    loadStatusEl.textContent = 'Building waveform…';
+    await new Promise(r => setTimeout(r, 0));
+    waveformDirty = true;
+    buildWaveformCache();
+    selStart = 0;
+    selEnd   = audioBuffer.duration;
+    editorSection.style.display = 'flex';
+    loadStatusEl.textContent = '';
+    dropZone.classList.remove('loading');
+    dropZone.classList.add('loaded');
+    dropZone.innerHTML = '<span class="dz-icon" aria-hidden="true">✓</span>'
+      + '<strong class="label" style="display:block;margin-bottom:2px">Source file</strong>'
+      + '<span class="dz-filename">' + escapeHtml(file.name) + '</span>'
+      + '<span class="dz-duration">' + audioBuffer.duration.toFixed(2) + ' s</span>';
+    applyZoom(1, 0);
+    updateInputs();
+    setStatus('Drag the markers on the waveform, or type times below');
+    if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // FFMPEG.WASM  (loaded lazily on first video file)
+  // Uses single-threaded build — no special COOP/COEP headers required.
+  // CDN: https://unpkg.com/@ffmpeg/ffmpeg and @ffmpeg/core
+  // ══════════════════════════════════════════════════════════════════════════════
+
+  let ffmpegInstance = null;  // cached after first load
+
+  async function loadFFmpeg() {
+    if (ffmpegInstance) return ffmpegInstance;
+
+    loadStatusEl.textContent = 'Loading FFmpeg (~10 MB)…';
+    loadStatusEl.className   = 'status';
+
+    // Self-contained helpers — no external util script needed
+    const toBlobURL = async (url, mimeType) => {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error('Failed to fetch ' + url);
+      const blob = new Blob([await resp.arrayBuffer()], { type: mimeType });
+      return URL.createObjectURL(blob);
+    };
+    const fetchFile = async (file) => {
+      if (file instanceof File || file instanceof Blob) {
+        return new Uint8Array(await file.arrayBuffer());
+      }
+      return new Uint8Array(await (await fetch(file)).arrayBuffer());
+    };
+
+    const baseURL = './ffmpeg';  // host these files alongside the HTML
+    const coreURL = './ffmpeg';
+
+    loadStatusEl.textContent = 'Loading FFmpeg JS…';
+    console.log('[ffmpeg] crossOriginIsolated=', self.crossOriginIsolated);
+    await loadScript(baseURL + '/ffmpeg.js');
+    console.log('[ffmpeg] script loaded, FFmpegWASM=', typeof window.FFmpegWASM);
+
+    if (!window.FFmpegWASM || !window.FFmpegWASM.FFmpeg) {
+      throw new Error('FFmpegWASM global not found after script load — wrong file or version?');
+    }
+
+    const { FFmpeg } = window.FFmpegWASM;
+    const ff = new FFmpeg();
+    console.log('[ffmpeg] FFmpeg instance created');
+    ff.on('log',      ({ message })  => console.log('[ffmpeg]', message));
+    ff.on('progress', ({ progress }) => {
+      if (progress > 0)
+        loadStatusEl.textContent = 'Processing… ' + Math.round(progress * 100) + '%';
+    });
+
+    loadStatusEl.textContent = 'Loading FFmpeg WASM core…';
+    console.log('[ffmpeg] fetching core files...');
+
+    const [coreBlob, wasmBlob] = await Promise.all([
+      fetch(coreURL + '/ffmpeg-core.js').then(r => r.blob()),
+      fetch(coreURL + '/ffmpeg-core.wasm').then(r => r.blob()),
+    ]);
+    console.log('[ffmpeg] core files fetched, sizes:', coreBlob.size, wasmBlob.size);
+
+    const coreObjURL = URL.createObjectURL(new Blob([await coreBlob.arrayBuffer()], { type: 'text/javascript' }));
+    const wasmObjURL = URL.createObjectURL(new Blob([await wasmBlob.arrayBuffer()], { type: 'application/wasm' }));
+
+    await Promise.race([
+      ff.load({ coreURL: coreObjURL, wasmURL: wasmObjURL })
+        .then(() => console.log('[ffmpeg] ff.load resolved')),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(
+          'FFmpeg WASM timed out. Check DevTools console for details.'
+        )), 30000)
+      )
+    ]);
+
+    ffmpegInstance = { ff, fetchFile };
+    loadStatusEl.textContent = '';
+    return ffmpegInstance;
+  }
+
+  // Inject a <script> tag and wait for it to load
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector('script[src="' + src + '"]')) { resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload  = resolve;
+      s.onerror = () => reject(new Error('Failed to load: ' + src));
+      document.head.appendChild(s);
+    });
+  }
+
+  // Load a video file: use FFmpeg to extract audio track as WAV,
+  // then feed the WAV into the normal decodeAudioData path.
+  async function loadFileWithFFmpeg(file) {
+    const { ff, fetchFile } = await loadFFmpeg();
+
+    loadStatusEl.textContent = 'Extracting audio track…';
+    loadStatusEl.className   = 'status';
+
+    const inName  = 'input' + file.name.substring(file.name.lastIndexOf('.'));
+    const outName = 'audio.wav';
+
+    await ff.writeFile(inName, await fetchFile(file));
+    // -vn: drop video, -acodec pcm_s16le: uncompressed WAV
+    await ff.exec(['-i', inName, '-vn', '-acodec', 'pcm_s16le', outName]);
+    const wavData = await ff.readFile(outName);
+    await ff.deleteFile(inName);
+    await ff.deleteFile(outName);
+
+    loadStatusEl.textContent = 'Decoding audio…';
+    const wavBuffer = wavData.buffer.slice(wavData.byteOffset,
+                                           wavData.byteOffset + wavData.byteLength);
+    audioBuffer = await getAC().decodeAudioData(wavBuffer);
+    await finishLoad(file);
+  }
+
+  // Extract a region from a video file using FFmpeg directly —
+  // faster and avoids double decode/encode.
+  async function extractWithFFmpeg(file, fmt, startSec, endSec, fadeIn, fadeOut) {
+    const { ff, fetchFile } = await loadFFmpeg();
+
+    setStatus('Processing with FFmpeg…');
+
+    const ext    = fmt === 'aac' ? 'aac' : 'wav';
+    const inName = 'input' + file.name.substring(file.name.lastIndexOf('.'));
+    const outName = 'output.' + ext;
+
+    await ff.writeFile(inName, await fetchFile(file));
+
+    const args = ['-i', inName,
+                  '-ss', startSec.toFixed(3),
+                  '-to', endSec.toFixed(3),
+                  '-vn'];
+
+    // Build audio filter for optional fade
+    const filters = [];
+    if (fadeIn  > 0) filters.push('afade=t=in:st=0:d='  + fadeIn.toFixed(2));
+    if (fadeOut > 0) filters.push('afade=t=out:st=' + (endSec - startSec - fadeOut).toFixed(2)
+                                  + ':d=' + fadeOut.toFixed(2));
+    if (filters.length) { args.push('-af'); args.push(filters.join(',')); }
+
+    if (fmt === 'aac') {
+      args.push('-acodec', 'aac', '-b:a', '128k');
+    } else {
+      args.push('-acodec', 'pcm_s16le');
+    }
+    args.push(outName);
+
+    await ff.exec(args);
+    const outData = await ff.readFile(outName);
+    await ff.deleteFile(inName);
+    await ff.deleteFile(outName);
+
+    const blob = new Blob(
+      [outData.buffer.slice(outData.byteOffset, outData.byteOffset + outData.byteLength)],
+      { type: fmt === 'aac' ? 'audio/aac' : 'audio/wav' }
+    );
+    return { blob, ext };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════════
+  // END FFMPEG.WASM
+  // ══════════════════════════════════════════════════════════════════════════════
 
   function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -911,10 +1117,29 @@
     lengthDisplay.textContent = (selEnd - selStart).toFixed(2);
     updateExtractBtn();
     updateEstSize();
+    markExtractDirty();
   }
 
   function updateExtractBtn() {
-    extractBtn.disabled = !audioBuffer || selEnd <= selStart;
+    const ready = audioBuffer && selEnd > selStart;
+    downloadLink.classList.toggle('active',   !!audioBuffer);
+    downloadLink.classList.toggle('disabled', !ready);
+    if (!ready) dlFilename.textContent = '';
+    else updateDownloadFilename();
+  }
+
+  // Pre-computes and shows the output filename so the button is always one click.
+  // Clears the href so the next click re-encodes (not re-downloads old blob).
+  function updateDownloadFilename() {
+    if (!audioBuffer || selEnd <= selStart) return;
+    const baseName = sourceFile ? sourceFile.name.replace(/\.[^.]+$/, '') : 'audio';
+    const ts       = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
+    const ext      = fmtSelect.value === 'aac' ? 'aac' : 'wav';
+    dlFilename.textContent = baseName + '_' + ts + '.' + ext;
+    // Clear stale href so next click always re-encodes
+    downloadLink.removeAttribute('href');
+    downloadLink.removeAttribute('download');
+    downloadLink.dataset.dirty = '1';
   }
 
   startInput.addEventListener('input', syncTimeInputs);
@@ -950,8 +1175,8 @@
     updateLosslessBadge();
     updateEstSize();
   }
-  fmtSelect.addEventListener('change', updateFmtUI);
-  bitrateSelect.addEventListener('change', updateEstSize);
+  fmtSelect.addEventListener('change', () => { updateFmtUI(); markExtractDirty(); });
+  bitrateSelect.addEventListener('change', () => { updateEstSize(); markExtractDirty(); });
   updateFmtUI(); // set initial state
 
   // ── Estimated output file size ────────────────────────────────────────────────
@@ -1058,58 +1283,84 @@
     setStatus('Playing preview…');
   });
 
-  // ── Extract ───────────────────────────────────────────────────────────────────
-  extractBtn.addEventListener('click', async () => {
-    if (!audioBuffer || selEnd <= selStart) return;
+  // ── Extract + download ────────────────────────────────────────────────────────
+  downloadLink.addEventListener('click', async e => {
+    if (downloadLink.classList.contains('disabled')) { e.preventDefault(); return; }
+    if (!audioBuffer || selEnd <= selStart) { e.preventDefault(); return; }
+
+    // If we already have a fresh href set, let the browser handle the download
+    // naturally (user clicked again without changing anything).
+    if (downloadLink.href && downloadLink.href !== window.location.href
+        && !downloadLink.dataset.dirty) return;
+
+    e.preventDefault();
+    downloadLink.dataset.dirty = '';
 
     const fmt     = fmtSelect.value;
     const hasFade = (parseFloat(fadeInEl.value) || 0) > 0 ||
                     (parseFloat(fadeOutEl.value) || 0) > 0;
 
-    extractBtn.disabled = true;
-    downloadLink.style.display = 'none';
+    downloadLink.classList.add('disabled');
 
     try {
-      // Base name without extension, e.g. "my_recording"
       const baseName = sourceFile ? sourceFile.name.replace(/\.[^.]+$/, '') : 'audio';
       const ts       = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
       let blob, filename;
 
-      // ── Try lossless remux first (only when no fade is applied) ──────────────
-      setStatus(hasFade ? '' : 'Checking for lossless copy…');
-      const remuxed = hasFade ? null : await tryRemux(sourceFile, fmt, selStart, selEnd);
+      const fadeIn  = parseFloat(fadeInEl.value)  || 0;
+      const fadeOut = parseFloat(fadeOutEl.value) || 0;
 
-      if (remuxed) {
-        blob     = remuxed.blob;
-        filename = baseName + '_' + ts + '.' + remuxed.ext;
-        setStatus((selEnd - selStart).toFixed(2) + 's — lossless copy', 'ok');
-      } else {
-        // ── Fall back to decode → reencode ────────────────────────────────────
-        setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
-        const faded = buildFadedBuffer();
-
-        if (fmt === 'aac') {
-          blob     = await extractAAC(faded, 0, faded.duration);
-          filename = baseName + '_' + ts + '.aac';
-        } else {
-          blob     = extractWAV(faded, 0, faded.duration);
-          filename = baseName + '_' + ts + '.wav';
+      // ── Video files: always use FFmpeg ────────────────────────────────────────
+      if (isVideoFile(sourceFormat, sourceFile?.name || '')) {
+        if (!ffmpegInstance) {
+          const ok = confirm('Extracting from video requires FFmpeg (~10 MB).\nThis is downloaded once and cached by your browser.\nProceed?');
+          if (!ok) { downloadLink.classList.remove('disabled'); return; }
         }
-        setStatus((selEnd - selStart).toFixed(2) + 's as ' + fmt.toUpperCase(), 'ok');
+        const result = await extractWithFFmpeg(sourceFile, fmt, selStart, selEnd, fadeIn, fadeOut);
+        blob     = result.blob;
+        filename = baseName + '_' + ts + '.' + result.ext;
+        setStatus((selEnd - selStart).toFixed(2) + 's as ' + result.ext.toUpperCase(), 'ok');
+
+      } else {
+        // ── Audio files: existing remux / encode path ─────────────────────────
+        setStatus(hasFade ? '' : 'Checking for lossless copy…');
+        const remuxed = hasFade ? null : await tryRemux(sourceFile, fmt, selStart, selEnd);
+
+        if (remuxed) {
+          blob     = remuxed.blob;
+          filename = baseName + '_' + ts + '.' + remuxed.ext;
+          setStatus((selEnd - selStart).toFixed(2) + 's — lossless copy', 'ok');
+        } else {
+          setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
+          const faded = buildFadedBuffer();
+          if (fmt === 'aac') {
+            blob     = await extractAAC(faded, 0, faded.duration);
+            filename = baseName + '_' + ts + '.aac';
+          } else {
+            blob     = extractWAV(faded, 0, faded.duration);
+            filename = baseName + '_' + ts + '.wav';
+          }
+          setStatus((selEnd - selStart).toFixed(2) + 's as ' + fmt.toUpperCase(), 'ok');
+        }
       }
 
       const url = URL.createObjectURL(blob);
       downloadLink.href     = url;
       downloadLink.download = filename;
-      downloadLink.style.display = 'inline-block';
-      dlFilename.textContent = 'Save ' + filename;
+      dlFilename.textContent = filename;
+      downloadLink.classList.remove('disabled');
+
+      // Trigger the download automatically
+      downloadLink.click();
 
     } catch (err) {
       setStatus('Error: ' + (err.message || String(err)), 'error');
+      downloadLink.classList.remove('disabled');
     }
-
-    extractBtn.disabled = false;
   });
+
+  // Mark dirty whenever the selection or format changes so next click re-encodes
+  function markExtractDirty() { downloadLink.dataset.dirty = '1'; }
 
   // ══════════════════════════════════════════════════════════════════════════════
   // LOSSLESS REMUXER
@@ -1160,7 +1411,15 @@
     const id = (o) => String.fromCharCode(u8[o], u8[o+1], u8[o+2], u8[o+3]);
     if (id(0) === 'RIFF' && id(8) === 'WAVE')  return 'wav';
     if (id(0) === 'fLaC')                       return 'flac';
+    // MP4 / M4A / M4V / MOV all use 'ftyp' box at offset 4
     if (id(4) === 'ftyp')                       return 'mp4';
+    // WebM / MKV: EBML magic
+    if (u8[0] === 0x1A && u8[1] === 0x45 && u8[2] === 0xDF && u8[3] === 0xA3) return 'webm';
+    // OGG
+    if (id(0) === 'OggS')                       return 'ogg';
+    // AVI
+    if (id(0) === 'RIFF' && id(8) === 'AVI ')   return 'avi';
+    // ADTS AAC
     if (u8[0] === 0xFF && (u8[1] & 0xF0) === 0xF0 &&
         (u8[1] & 0x06) === 0x00)                return 'adts';
     return null;
