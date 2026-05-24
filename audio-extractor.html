@@ -347,7 +347,7 @@
   <header>
     <img src="favicon.svg" width="44" height="44" alt="Audio Extractor logo">
     <div>
-      <h1>Audio Extractor ver 37</h1>
+      <h1>Audio Extractor ver 38</h1>
       <div class="credit">(made by Claude AI)</div>
     </div>
   </header>
@@ -459,7 +459,7 @@
     <div class="btn-row">
       <button id="play-btn" type="button">▶ Preview</button>
       <a id="download-link" role="button" tabindex="0">
-        ✂ ↓ Extract and download to file<br>
+        ✂ Extract to file:<br>
         <span id="dl-filename"></span>
       </a>
     </div>
@@ -843,19 +843,6 @@
     inputFmtEl.textContent = '—';
     updateLosslessBadge();
 
-    // Detect container format from the first 16 bytes (cheap slice, not whole file)
-    file.slice(0, 16).arrayBuffer().then(header => {
-      const u8   = new Uint8Array(header);
-      const view = new DataView(header);
-      sourceFormat = detectContainerFormat(view, u8);
-      const labels = {
-        wav: 'WAV', adts: 'AAC', mp4: 'MP4 / M4A / MOV',
-        flac: 'FLAC', webm: 'WebM', ogg: 'OGG', avi: 'AVI'
-      };
-      inputFmtEl.textContent = labels[sourceFormat] || file.name.split('.').pop().toUpperCase() || '—';
-      updateLosslessBadge();
-    }).catch(() => {});
-
     setStatus('Reading file…');
     downloadLink.classList.remove('active', 'disabled');
     downloadLink.removeAttribute('href');
@@ -869,13 +856,63 @@
 
     const reader = new FileReader();
     reader.onload = async evt => {
+      let fmtLabel = file.name.split('.').pop().toUpperCase() || 'unknown';
       try {
+        // Detect format first so it's available if decoding fails
+        const header = evt.target.result.slice(0, 16);
+        const u8     = new Uint8Array(header);
+        const view   = new DataView(header);
+        sourceFormat = detectContainerFormat(view, u8);
+        const labels = {
+          wav: 'WAV', adts: 'AAC', mp4: 'MP4 / M4A / MOV',
+          flac: 'FLAC', webm: 'WebM', ogg: 'OGG', avi: 'AVI'
+        };
+        fmtLabel = labels[sourceFormat] || fmtLabel;
+
+        // For WAV, read the subformat from the fmt chunk for a more helpful message
+        if (sourceFormat === 'wav') {
+          try {
+            const full = new DataView(evt.target.result);
+            const fu8  = new Uint8Array(evt.target.result);
+            let p = 12;
+            while (p < fu8.length - 8) {
+              const tag = String.fromCharCode(fu8[p],fu8[p+1],fu8[p+2],fu8[p+3]);
+              const sz  = full.getUint32(p + 4, true);
+              if (tag === 'fmt ') {
+                const audioFmt = full.getUint16(p + 8, true);
+                const bps      = full.getUint16(p + 22, true);
+                const fmtNames = { 1: 'PCM', 3: 'IEEE float', 6: 'A-law', 7: 'μ-law', 0xFFFE: 'Extensible' };
+                const fmtName  = fmtNames[audioFmt] || ('format 0x' + audioFmt.toString(16));
+                fmtLabel = 'WAV (' + fmtName + ' ' + bps + '-bit)';
+                break;
+              }
+              if (sz === 0) break;
+              p += 8 + sz + (sz & 1);
+            }
+          } catch (_) {}
+        }
+
+        // For MP4, use the file extension and ftyp major brand
+        if (sourceFormat === 'mp4') {
+          try {
+            const ext   = file.name.split('.').pop().toUpperCase();
+            const full  = new DataView(evt.target.result);
+            const fu8   = new Uint8Array(evt.target.result);
+            const brand = String.fromCharCode(fu8[8],fu8[9],fu8[10],fu8[11]).trim();
+            const brandLabels = { 'M4A ': 'M4A (AAC audio)', 'M4V ': 'M4V', 'mp41': 'MP4', 'mp42': 'MP4',
+                                  'isom': 'MP4', 'iso2': 'MP4', 'avc1': 'MP4', 'qt  ': 'MOV (QuickTime)' };
+            fmtLabel = (brandLabels[brand] || ext) + ' container';
+          } catch (_) {}
+        }
+        inputFmtEl.textContent = fmtLabel;
+        updateLosslessBadge();
+
         loadStatusEl.textContent = 'Decoding audio…';
         loadStatusEl.className   = 'status';
         audioBuffer = await getAC().decodeAudioData(evt.target.result);
         await finishLoad(file);
       } catch (err) {
-        showLoadError('Could not decode: ' + err.message);
+        showLoadError('Could not decode ' + fmtLabel + ': ' + err.message);
       }
     };
     reader.onerror = () => showLoadError('Could not read file.');

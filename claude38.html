@@ -5,19 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Audio Extractor</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <script>
-    // Register service worker that adds COOP/COEP headers needed by ffmpeg.wasm.
-    // The page reloads once after the SW activates — subsequent loads are isolated.
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./coi-serviceworker.js').then(reg => {
-        if (!crossOriginIsolated) {
-          // SW just installed — reload so the headers take effect
-          reg.addEventListener('updatefound', () => location.reload());
-          if (reg.installing) location.reload();
-        }
-      });
-    }
-  </script>
   <style>
     /* ── Reset ─────────────────────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -472,7 +459,7 @@
     <div class="btn-row">
       <button id="play-btn" type="button">▶ Preview</button>
       <a id="download-link" role="button" tabindex="0">
-        ✂ ↓ Extract and download to file<br>
+        ✂ Extract to file:<br>
         <span id="dl-filename"></span>
       </a>
     </div>
@@ -856,23 +843,6 @@
     inputFmtEl.textContent = '—';
     updateLosslessBadge();
 
-    // Detect container format from the first 16 bytes (cheap slice, not whole file)
-    file.slice(0, 16).arrayBuffer().then(header => {
-      const u8   = new Uint8Array(header);
-      const view = new DataView(header);
-      sourceFormat = detectContainerFormat(view, u8);
-      const labels = {
-        wav: 'WAV', adts: 'AAC', mp4: 'MP4 / M4A / MOV',
-        flac: 'FLAC', webm: 'WebM', ogg: 'OGG', avi: 'AVI'
-      };
-      inputFmtEl.textContent = labels[sourceFormat] || file.name.split('.').pop().toUpperCase() || '—';
-      if (isVideoFile(sourceFormat, file.name)) {
-        loadStatusEl.textContent = 'Note: video files require FFmpeg (~10 MB download, cached after first use).';
-        loadStatusEl.className   = 'status';
-      }
-      updateLosslessBadge();
-    }).catch(() => {});
-
     setStatus('Reading file…');
     downloadLink.classList.remove('active', 'disabled');
     downloadLink.removeAttribute('href');
@@ -886,32 +856,67 @@
 
     const reader = new FileReader();
     reader.onload = async evt => {
+      let fmtLabel = file.name.split('.').pop().toUpperCase() || 'unknown';
       try {
-        if (isVideoFile(sourceFormat, file.name)) {
-          await loadFileWithFFmpeg(file);
-        } else {
-          loadStatusEl.textContent = 'Decoding audio…';
-          loadStatusEl.className   = 'status';
-          const ac = getAC();
-          audioBuffer = await ac.decodeAudioData(evt.target.result);
-          await finishLoad(file);
+        // Detect format first so it's available if decoding fails
+        const header = evt.target.result.slice(0, 16);
+        const u8     = new Uint8Array(header);
+        const view   = new DataView(header);
+        sourceFormat = detectContainerFormat(view, u8);
+        const labels = {
+          wav: 'WAV', adts: 'AAC', mp4: 'MP4 / M4A / MOV',
+          flac: 'FLAC', webm: 'WebM', ogg: 'OGG', avi: 'AVI'
+        };
+        fmtLabel = labels[sourceFormat] || fmtLabel;
+
+        // For WAV, read the subformat from the fmt chunk for a more helpful message
+        if (sourceFormat === 'wav') {
+          try {
+            const full = new DataView(evt.target.result);
+            const fu8  = new Uint8Array(evt.target.result);
+            let p = 12;
+            while (p < fu8.length - 8) {
+              const tag = String.fromCharCode(fu8[p],fu8[p+1],fu8[p+2],fu8[p+3]);
+              const sz  = full.getUint32(p + 4, true);
+              if (tag === 'fmt ') {
+                const audioFmt = full.getUint16(p + 8, true);
+                const bps      = full.getUint16(p + 22, true);
+                const fmtNames = { 1: 'PCM', 3: 'IEEE float', 6: 'A-law', 7: 'μ-law', 0xFFFE: 'Extensible' };
+                const fmtName  = fmtNames[audioFmt] || ('format 0x' + audioFmt.toString(16));
+                fmtLabel = 'WAV (' + fmtName + ' ' + bps + '-bit)';
+                break;
+              }
+              if (sz === 0) break;
+              p += 8 + sz + (sz & 1);
+            }
+          } catch (_) {}
         }
+
+        // For MP4, use the file extension and ftyp major brand
+        if (sourceFormat === 'mp4') {
+          try {
+            const ext   = file.name.split('.').pop().toUpperCase();
+            const full  = new DataView(evt.target.result);
+            const fu8   = new Uint8Array(evt.target.result);
+            const brand = String.fromCharCode(fu8[8],fu8[9],fu8[10],fu8[11]).trim();
+            const brandLabels = { 'M4A ': 'M4A (AAC audio)', 'M4V ': 'M4V', 'mp41': 'MP4', 'mp42': 'MP4',
+                                  'isom': 'MP4', 'iso2': 'MP4', 'avc1': 'MP4', 'qt  ': 'MOV (QuickTime)' };
+            fmtLabel = (brandLabels[brand] || ext) + ' container';
+          } catch (_) {}
+        }
+        inputFmtEl.textContent = fmtLabel;
+        updateLosslessBadge();
+
+        loadStatusEl.textContent = 'Decoding audio…';
+        loadStatusEl.className   = 'status';
+        audioBuffer = await getAC().decodeAudioData(evt.target.result);
+        await finishLoad(file);
       } catch (err) {
-        showLoadError('Could not decode: ' + err.message);
+        showLoadError('Could not decode ' + fmtLabel + ': ' + err.message);
       }
     };
     reader.onerror = () => showLoadError('Could not read file.');
     reader.readAsArrayBuffer(file);
-  }
-
-  function isVideoFile(fmt, name) {
-    if (fmt === 'webm' || fmt === 'avi') return true;
-    // For mp4/ftyp, check extension — M4A is audio-only, MP4/MOV/M4V are video
-    if (fmt === 'mp4') {
-      const ext = name.split('.').pop().toLowerCase();
-      return ext === 'mp4' || ext === 'mov' || ext === 'm4v' || ext === 'mkv';
-    }
-    return false;
   }
 
   function showLoadError(msg) {
@@ -944,167 +949,6 @@
     setStatus('Drag the markers on the waveform, or type times below');
     if (typeof AudioEncoder !== 'undefined') checkBitrateSupport();
   }
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // FFMPEG.WASM  (loaded lazily on first video file)
-  // Uses single-threaded build — no special COOP/COEP headers required.
-  // CDN: https://unpkg.com/@ffmpeg/ffmpeg and @ffmpeg/core
-  // ══════════════════════════════════════════════════════════════════════════════
-
-  let ffmpegInstance = null;  // cached after first load
-
-  async function loadFFmpeg() {
-    if (ffmpegInstance) return ffmpegInstance;
-
-    loadStatusEl.textContent = 'Loading FFmpeg (~10 MB)…';
-    loadStatusEl.className   = 'status';
-
-    // Self-contained helpers — no external util script needed
-    const toBlobURL = async (url, mimeType) => {
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error('Failed to fetch ' + url);
-      const blob = new Blob([await resp.arrayBuffer()], { type: mimeType });
-      return URL.createObjectURL(blob);
-    };
-    const fetchFile = async (file) => {
-      if (file instanceof File || file instanceof Blob) {
-        return new Uint8Array(await file.arrayBuffer());
-      }
-      return new Uint8Array(await (await fetch(file)).arrayBuffer());
-    };
-
-    const baseURL = './ffmpeg';  // host these files alongside the HTML
-    const coreURL = './ffmpeg';
-
-    loadStatusEl.textContent = 'Loading FFmpeg JS…';
-    console.log('[ffmpeg] crossOriginIsolated=', self.crossOriginIsolated);
-    await loadScript(baseURL + '/ffmpeg.js');
-    console.log('[ffmpeg] script loaded, FFmpegWASM=', typeof window.FFmpegWASM);
-
-    if (!window.FFmpegWASM || !window.FFmpegWASM.FFmpeg) {
-      throw new Error('FFmpegWASM global not found after script load — wrong file or version?');
-    }
-
-    const { FFmpeg } = window.FFmpegWASM;
-    const ff = new FFmpeg();
-    console.log('[ffmpeg] FFmpeg instance created');
-    ff.on('log',      ({ message })  => console.log('[ffmpeg]', message));
-    ff.on('progress', ({ progress }) => {
-      if (progress > 0)
-        loadStatusEl.textContent = 'Processing… ' + Math.round(progress * 100) + '%';
-    });
-
-    loadStatusEl.textContent = 'Loading FFmpeg WASM core…';
-    console.log('[ffmpeg] fetching core files...');
-
-    const [coreBlob, wasmBlob] = await Promise.all([
-      fetch(coreURL + '/ffmpeg-core.js').then(r => r.blob()),
-      fetch(coreURL + '/ffmpeg-core.wasm').then(r => r.blob()),
-    ]);
-    console.log('[ffmpeg] core files fetched, sizes:', coreBlob.size, wasmBlob.size);
-
-    const coreObjURL = URL.createObjectURL(new Blob([await coreBlob.arrayBuffer()], { type: 'text/javascript' }));
-    const wasmObjURL = URL.createObjectURL(new Blob([await wasmBlob.arrayBuffer()], { type: 'application/wasm' }));
-
-    await Promise.race([
-      ff.load({ coreURL: coreObjURL, wasmURL: wasmObjURL })
-        .then(() => console.log('[ffmpeg] ff.load resolved')),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error(
-          'FFmpeg WASM timed out. Check DevTools console for details.'
-        )), 30000)
-      )
-    ]);
-
-    ffmpegInstance = { ff, fetchFile };
-    loadStatusEl.textContent = '';
-    return ffmpegInstance;
-  }
-
-  // Inject a <script> tag and wait for it to load
-  function loadScript(src) {
-    return new Promise((resolve, reject) => {
-      if (document.querySelector('script[src="' + src + '"]')) { resolve(); return; }
-      const s = document.createElement('script');
-      s.src = src;
-      s.onload  = resolve;
-      s.onerror = () => reject(new Error('Failed to load: ' + src));
-      document.head.appendChild(s);
-    });
-  }
-
-  // Load a video file: use FFmpeg to extract audio track as WAV,
-  // then feed the WAV into the normal decodeAudioData path.
-  async function loadFileWithFFmpeg(file) {
-    const { ff, fetchFile } = await loadFFmpeg();
-
-    loadStatusEl.textContent = 'Extracting audio track…';
-    loadStatusEl.className   = 'status';
-
-    const inName  = 'input' + file.name.substring(file.name.lastIndexOf('.'));
-    const outName = 'audio.wav';
-
-    await ff.writeFile(inName, await fetchFile(file));
-    // -vn: drop video, -acodec pcm_s16le: uncompressed WAV
-    await ff.exec(['-i', inName, '-vn', '-acodec', 'pcm_s16le', outName]);
-    const wavData = await ff.readFile(outName);
-    await ff.deleteFile(inName);
-    await ff.deleteFile(outName);
-
-    loadStatusEl.textContent = 'Decoding audio…';
-    const wavBuffer = wavData.buffer.slice(wavData.byteOffset,
-                                           wavData.byteOffset + wavData.byteLength);
-    audioBuffer = await getAC().decodeAudioData(wavBuffer);
-    await finishLoad(file);
-  }
-
-  // Extract a region from a video file using FFmpeg directly —
-  // faster and avoids double decode/encode.
-  async function extractWithFFmpeg(file, fmt, startSec, endSec, fadeIn, fadeOut) {
-    const { ff, fetchFile } = await loadFFmpeg();
-
-    setStatus('Processing with FFmpeg…');
-
-    const ext    = fmt === 'aac' ? 'aac' : 'wav';
-    const inName = 'input' + file.name.substring(file.name.lastIndexOf('.'));
-    const outName = 'output.' + ext;
-
-    await ff.writeFile(inName, await fetchFile(file));
-
-    const args = ['-i', inName,
-                  '-ss', startSec.toFixed(3),
-                  '-to', endSec.toFixed(3),
-                  '-vn'];
-
-    // Build audio filter for optional fade
-    const filters = [];
-    if (fadeIn  > 0) filters.push('afade=t=in:st=0:d='  + fadeIn.toFixed(2));
-    if (fadeOut > 0) filters.push('afade=t=out:st=' + (endSec - startSec - fadeOut).toFixed(2)
-                                  + ':d=' + fadeOut.toFixed(2));
-    if (filters.length) { args.push('-af'); args.push(filters.join(',')); }
-
-    if (fmt === 'aac') {
-      args.push('-acodec', 'aac', '-b:a', '128k');
-    } else {
-      args.push('-acodec', 'pcm_s16le');
-    }
-    args.push(outName);
-
-    await ff.exec(args);
-    const outData = await ff.readFile(outName);
-    await ff.deleteFile(inName);
-    await ff.deleteFile(outName);
-
-    const blob = new Blob(
-      [outData.buffer.slice(outData.byteOffset, outData.byteOffset + outData.byteLength)],
-      { type: fmt === 'aac' ? 'audio/aac' : 'audio/wav' }
-    );
-    return { blob, ext };
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════════
-  // END FFMPEG.WASM
-  // ══════════════════════════════════════════════════════════════════════════════
 
   function escapeHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1310,38 +1154,24 @@
       const fadeIn  = parseFloat(fadeInEl.value)  || 0;
       const fadeOut = parseFloat(fadeOutEl.value) || 0;
 
-      // ── Video files: always use FFmpeg ────────────────────────────────────────
-      if (isVideoFile(sourceFormat, sourceFile?.name || '')) {
-        if (!ffmpegInstance) {
-          const ok = confirm('Extracting from video requires FFmpeg (~10 MB).\nThis is downloaded once and cached by your browser.\nProceed?');
-          if (!ok) { downloadLink.classList.remove('disabled'); return; }
-        }
-        const result = await extractWithFFmpeg(sourceFile, fmt, selStart, selEnd, fadeIn, fadeOut);
-        blob     = result.blob;
-        filename = baseName + '_' + ts + '.' + result.ext;
-        setStatus((selEnd - selStart).toFixed(2) + 's as ' + result.ext.toUpperCase(), 'ok');
+      setStatus(hasFade ? '' : 'Checking for lossless copy…');
+      const remuxed = hasFade ? null : await tryRemux(sourceFile, fmt, selStart, selEnd);
 
+      if (remuxed) {
+        blob     = remuxed.blob;
+        filename = baseName + '_' + ts + '.' + remuxed.ext;
+        setStatus((selEnd - selStart).toFixed(2) + 's — lossless copy', 'ok');
       } else {
-        // ── Audio files: existing remux / encode path ─────────────────────────
-        setStatus(hasFade ? '' : 'Checking for lossless copy…');
-        const remuxed = hasFade ? null : await tryRemux(sourceFile, fmt, selStart, selEnd);
-
-        if (remuxed) {
-          blob     = remuxed.blob;
-          filename = baseName + '_' + ts + '.' + remuxed.ext;
-          setStatus((selEnd - selStart).toFixed(2) + 's — lossless copy', 'ok');
+        setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
+        const faded = buildFadedBuffer();
+        if (fmt === 'aac') {
+          blob     = await extractAAC(faded, 0, faded.duration);
+          filename = baseName + '_' + ts + '.aac';
         } else {
-          setStatus(fmt === 'aac' ? 'Encoding AAC via AudioEncoder…' : 'Encoding WAV…');
-          const faded = buildFadedBuffer();
-          if (fmt === 'aac') {
-            blob     = await extractAAC(faded, 0, faded.duration);
-            filename = baseName + '_' + ts + '.aac';
-          } else {
-            blob     = extractWAV(faded, 0, faded.duration);
-            filename = baseName + '_' + ts + '.wav';
-          }
-          setStatus((selEnd - selStart).toFixed(2) + 's as ' + fmt.toUpperCase(), 'ok');
+          blob     = extractWAV(faded, 0, faded.duration);
+          filename = baseName + '_' + ts + '.wav';
         }
+        setStatus((selEnd - selStart).toFixed(2) + 's as ' + fmt.toUpperCase(), 'ok');
       }
 
       const url = URL.createObjectURL(blob);
