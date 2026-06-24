@@ -328,15 +328,14 @@
     }
     #download-link:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 2px; }
     #dl-filename {
-      font-size: 14px;
-      color: #d4d4d4;
-      margin-top: 6px;
-      word-break: break-all;
-    }
-    #dl-hint {
+      display: block;
       font-size: 13px;
-      color: #999;
-      margin-top: 3px;
+      font-weight: normal;
+      color: #444;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
     }
   </style>
   <link rel="stylesheet" href="audio-extractor.css">
@@ -410,7 +409,7 @@
         </div>
         <div class="time-field">
           <label>Max
-            <input type="number" id="max-input" min="0" step="1" value="0">
+            <input type="number" id="max-input" min="0" step="1" value="10">
           </label>
         </div>
         <div class="time-field">
@@ -464,11 +463,10 @@
     <!-- Actions -->
     <div class="btn-row">
       <button id="play-btn" type="button">▶ Preview</button>
-      <a id="download-link" role="button" tabindex="0">✂ Extract to file</a>
-    </div>
-    <div id="download-hint" style="display:none">
-      <div id="dl-filename"></div>
-      <div id="dl-hint">Find it via the three-dot menu (⋮) in the upper right of Chrome.</div>
+      <a id="download-link" role="button" tabindex="0">
+        ✂ Extract to file:<br>
+        <span id="dl-filename"></span>
+      </a>
     </div>
   </div>
 
@@ -497,7 +495,6 @@
   const playBtn       = document.getElementById('play-btn');
   const downloadLink  = document.getElementById('download-link');
   const dlFilename    = document.getElementById('dl-filename');
-  const downloadHint  = document.getElementById('download-hint');
   const fadeInEl      = document.getElementById('fade-in');
   const fadeOutEl     = document.getElementById('fade-out');
   const statusEl      = document.getElementById('status');
@@ -509,7 +506,7 @@
   const panRow        = document.getElementById('pan-row');
 
   // ── URL parameter ─────────────────────────────────────────────────────────────
-  let maxSec = Math.max(0, parseFloat(new URLSearchParams(location.search).get('seconds')) || 0);
+  let maxSec = Math.max(0, parseFloat(new URLSearchParams(location.search).get('seconds')) || 10);
 
   // ── State ───────────────────────────────────────────────────────────────────
   let audioCtx    = null;
@@ -865,7 +862,6 @@
     downloadLink.removeAttribute('href');
     downloadLink.removeAttribute('download');
     dlFilename.textContent = '';
-    downloadHint.style.display = 'none';
     markExtractDirty();
     dropZone.classList.remove('loaded');
     dropZone.classList.add('loading');
@@ -997,6 +993,8 @@
     const baseName = sourceFile ? sourceFile.name.replace(/\.[^.]+$/, '') : 'audio';
     const ts       = selStart.toFixed(2) + '-' + selEnd.toFixed(2);
     const ext      = fmtSelect.value === 'aac' ? 'aac' : 'wav';
+    dlFilename.textContent = baseName + '_' + ts + '.' + ext;
+    // Clear stale href so next click always re-encodes
     downloadLink.removeAttribute('href');
     downloadLink.removeAttribute('download');
     downloadLink.dataset.dirty = '1';
@@ -1223,7 +1221,6 @@
       downloadLink.href     = url;
       downloadLink.download = filename;
       dlFilename.textContent = filename;
-      downloadHint.style.display = 'block';
       downloadLink.classList.remove('disabled');
 
       // Trigger the download automatically
