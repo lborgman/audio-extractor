@@ -256,6 +256,17 @@ canvas#waveform:focus-visible {
   text-align: right;
 }
 
+/* Keep type="number", but cleanly strip the arrows in Chromium */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  padding: 6px;
+}
+
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -346,7 +357,7 @@ select {
   font-family: var(--font-mono);
   /* font-size: 14px; */
   font-size: 1rem;
-  padding: 10px 14px;
+  /* padding: 10px 14px; */
   outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
@@ -378,10 +389,11 @@ select:focus {
 .fmt-row select {
   width: auto;
   min-width: 90px;
+  padding: 8px 8px;
 }
 
 .fade-row input[type="number"] {
-  width: 90px;
+  width: 60px;
 }
 
 #lossless-badge {
